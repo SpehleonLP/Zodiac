@@ -25,7 +25,9 @@ public:
 
 	void seek(int, Flags) override;
 	uint tell() const override;
-	int      GetFileDescriptor() override;
+
+	uint SubFileOffset() const override;
+
 
 protected:
 friend zIFileDescriptor * FromCFile(FILE *);
@@ -33,7 +35,7 @@ friend zIFileDescriptor * FromCFile(FILE **);
 	zCFile(FILE*, bool owns);
 
 	void PushSubFile(uint offset, uint byteLength) override;
-	void PushSubFile(uint offset, uint * byteLength) override;
+	void PushSubFile(uint * byteLength) override;
 	void PopSubFile() override;
 
 	struct StackFrame {
@@ -47,7 +49,6 @@ friend zIFileDescriptor * FromCFile(FILE **);
 	bool   ownsFile{};
 	uint8_t stackSize{};
 	uint8_t stackPos{};
-	uint streamPos{};
 	StackFrame * stack{};
 };
 

@@ -31,6 +31,7 @@ enum class Exception
 	zZE_CastingException,
 	zZE_BufferOverrun,
 	zZE_BadObjectAddress,
+	zZE_BadFunctionInfo,
 	zZE_DuplicateObjectAddress,
 	zZE_ObjectRestoreTypeMismatch,
 	zZE_ObjectUnserializable,
@@ -39,6 +40,10 @@ enum class Exception
 	zZE_InconsistentObjectOwnership,
 	zZE_OwnerNotEncoded,
 	zZE_UnknownEncodingProtocol,
+	zZE_ModuleDoesNotExist,
+	zZE_DoubleLoad,
+	zZE_CantSaveContextWithoutBytecode,
+	zZE_ContextNotSuspended,
 };
 
 enum Flags
@@ -58,18 +63,18 @@ typedef void (*zFUNCTION_t)(void*);
 typedef void (*zREADER_FUNC_t)(zIZodiacReader *, void*);
 typedef void (*zWRITER_FUNC_t)(zIZodiacWriter *, void*);
 
-void ZodiacLoad(zIZodiacReader *, std::nullptr_t*, int *);
-void ZodiacSave(zIZodiacWriter *, std::nullptr_t*, int *);
+void ZodiacLoad(zIZodiacReader *, std::nullptr_t*, int &);
+void ZodiacSave(zIZodiacWriter *, std::nullptr_t*, int &);
 
 zIZodiac * zCreateZodiac(asIScriptEngine * engine);
 
-typedef void (*zSAVE_FUNC_t)(zIZodiacWriter *, void const*, int *);
-typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int *);
+typedef void (*zSAVE_FUNC_t)(zIZodiacWriter *, void const*, int &);
+typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int &);
 
 
-#define ZODIAC_GETSAVEFUNC(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacWriter *, T*, int *)>(ZodiacSave))
-#define ZODIAC_GETLOADFUNC_R(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T**, int *)>(ZodiacSave))
-#define ZODIAC_GETLOADFUNC_V(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T*, int *)>(ZodiacSave))
+#define ZODIAC_GETSAVEFUNC(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacWriter *, T*, int &)>(ZodiacSave))
+#define ZODIAC_GETLOADFUNC_R(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T**, int &)>(ZodiacLoad))
+#define ZODIAC_GETLOADFUNC_V(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T*, int &)>(ZodiacLoad))
 
 class zIZodiac
 {
@@ -78,7 +83,9 @@ public:
 
 	virtual asIScriptEngine * GetEngine() const = 0;
 
+//atomic
 	virtual bool    IsInProgress() const = 0;
+//atomic
 	virtual float   Progress() const = 0;
 
 	virtual void SetUserData(void *) = 0;
@@ -105,12 +112,12 @@ public:
 
 //does not copy string, assumes read only memory
 	template<typename T>
-	inline int   RegisteredRefType(const char * name, const char * nameSpace = nullptr)
-	{ return RegisteredTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace); }
+	inline int   RegisterRefType(const char * name, const char * nameSpace = nullptr)
+	{ return RegisterTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace); }
 
 	template<typename T>
-	inline int   RegisteredValueType(const char * name, const char * nameSpace = nullptr)
-	{ return RegisteredTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace); }
+	inline int   RegisterValueType(const char * name, const char * nameSpace = nullptr)
+	{ return RegisterTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace); }
 
 //the typeid builtin doesn't always necessarily get the same reference depending on implementation,
 //multiple can be created which isn't great for comparison.  Not fun!
@@ -124,14 +131,11 @@ public:
 	}
 
 protected:
-	virtual int   RegisteredTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
+	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
 
 private:
 	static int typeIdCounter;
 };
-
-template<typename T>
-void ZodiacSave(zIZodiacWriter, void *, int);
 
 template<> inline int zIZodiac::GetTypeId<std::nullptr_t>() { return 0; }
 
@@ -152,13 +156,15 @@ struct WriteSubFile;
 
 	virtual void   seek(int, Flags) = 0;
 	virtual uint tell() const = 0;
-	virtual int    GetFileDescriptor() = 0;
 
 	inline void rewind() { seek(0, zFILE_BEGIN); }
 
+	virtual uint SubFileOffset() const = 0;
+	inline uint AbsoluteTell() const { return SubFileOffset() + tell(); }
+
 protected:
 	virtual void PushSubFile(uint, uint) = 0;
-	virtual void PushSubFile(uint, uint*) = 0;
+	virtual void PushSubFile(uint*) = 0;
 	virtual void PopSubFile() = 0;
 };
 
@@ -178,7 +184,7 @@ private:
 
 struct zIFileDescriptor::WriteSubFile
 {
-	WriteSubFile(zIFileDescriptor * parent, uint offset, uint * length) : parent(parent) { parent->PushSubFile(offset, length); }
+	WriteSubFile(zIFileDescriptor * parent, uint * length) : parent(parent) { parent->PushSubFile(length); }
 	~WriteSubFile() { parent->PopSubFile(); }
 
 private:
@@ -196,15 +202,17 @@ public:
 	template<typename U, typename... Args>
 	U * LoadObject(uint id);
 
-	virtual void LoadScriptObject(void *, uint address, uint asTypeId, bool RefCount) = 0;
+	virtual void LoadScriptObject(void *, int address, uint asTypeId) = 0;
 
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	virtual void LoadScriptObject(void *, uint asTypeId, bool RefCount) = 0;
+	virtual void LoadScriptObject(void *, uint asTypeId) = 0;
 
-	virtual const char * LoadString(uint id) const = 0;
-	virtual asITypeInfo * LoadTypeInfo(uint id, bool RefCount) = 0;
-	virtual asIScriptFunction * LoadFunction(uint id, bool RefCount) = 0;
-	virtual asIScriptContext * LoadContext(uint id, bool RefCount) = 0;
+	virtual const char * LoadString(int id) const = 0;
+	virtual asITypeInfo * LoadTypeInfo(int id, bool RefCount) = 0;
+//always refcounts
+	virtual asIScriptFunction * LoadFunction(int id) = 0;
+//always refcounts
+	virtual asIScriptContext * LoadContext(int id) = 0;
 
 private:
 	template<typename U>
@@ -214,7 +222,7 @@ private:
 	template<typename U, typename V, typename... Args>
 	U * CastObject(void * ptr, uint typeId);
 
-	virtual void * LoadObject(uint id, zLOAD_FUNC_t, int * actualType) = 0;
+	virtual void * LoadObject(int id, zLOAD_FUNC_t, int & actualType) = 0;
 };
 
 class zIZodiacWriter
@@ -236,7 +244,7 @@ public:
 // ownr indicates the object that owns (allocated memory for) the object being written.
 // if the typeId isn't a handle type it is ignored.
 	template<typename T>
-	inline int SaveObject(T const* t) {	SaveObject(t, zIZodiac::GetTypeId<T>(), ZODIAC_GETSAVEFUNC(T)); }
+	inline int SaveObject(T const* t) {	return SaveObject(t, zIZodiac::GetTypeId<T>(), ZODIAC_GETSAVEFUNC(T)); }
 
 protected:
 	virtual int  SaveObject(void const* ptr, int zTypeId, zSAVE_FUNC_t) = 0;
@@ -268,7 +276,7 @@ template<typename T, typename... Args>
 inline T * zIZodiacReader::LoadObject(uint id)
 {
 	int actualType{};
-	void * ptr = LoadObject(id, ZODIAC_GETLOADFUNC_R(T), &actualType);
+	void * ptr = LoadObject(id, ZODIAC_GETLOADFUNC_R(T), actualType);
 
 	if(ptr != nullptr)
 		return CastObject<T, Args...>(ptr, actualType);

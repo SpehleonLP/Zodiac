@@ -7,6 +7,16 @@
 #include "zodiac.h"
 #endif
 
+#include "add_on/scriptstdstring/scriptstdstring.h"
+#include "add_on/contextmgr/contextmgr.h"
+#include "add_on/scriptfile/scriptfile.h"
+#include "add_on/scriptany/scriptany.h"
+#include "add_on/scriptdictionary/scriptdictionary.h"
+#include "add_on/scriptarray/scriptarray.h"
+#include "add_on/scriptgrid/scriptgrid.h"
+#include "add_on/scripthandle/scripthandle.h"
+#include "add_on/weakref/weakref.h"
+
 #include <string>
 #include <cassert>
 
@@ -82,14 +92,17 @@ namespace Zodiac
 			file->Read(&thread_id);
 
 			p->sleepUntil = (int64_t)sleepUntil + time;
-			p->keepCtxAfterExecution = reader->LoadContext(thread_id, false);
+			p->keepCtxAfterExecution = reader->LoadContext(thread_id);
 			p->coRoutines.resize(size, nullptr);
 
 			for(auto & ctx : p->coRoutines)
 			{
 				file->Read(&thread_id);
-				ctx = reader->LoadContext(thread_id, true);
+				ctx = reader->LoadContext(thread_id);
 			}
+
+			if(p->keepCtxAfterExecution)
+				p->keepCtxAfterExecution->Release();
 		}
 	}
 #endif
@@ -196,7 +209,7 @@ namespace Zodiac
 
 		for(uint32_t i = 0; i < size; ++i)
 		{
-			reader->LoadScriptObject((*array)->At(i), elementTypeId, true);
+			reader->LoadScriptObject((*array)->At(i), elementTypeId);
 		}
 	}
 #endif
@@ -350,7 +363,7 @@ namespace Zodiac
 		{
 			for(uint32_t y = 0; y < height; ++y)
 			{
-				reader->LoadScriptObject((*grid)->At(x, y), elementTypeId, true);
+				reader->LoadScriptObject((*grid)->At(x, y), elementTypeId);
 			}
 		}
 	}
@@ -392,10 +405,13 @@ namespace Zodiac
 		if(typeInfo)
 		{
 			assert(typeInfo == nullptr || typeInfo->GetTypeId() & asTYPEID_OBJHANDLE);
-			reader->LoadScriptObject(&obj, typeInfo->GetTypeId(), false);
+			reader->LoadScriptObject(&obj, typeInfo->GetTypeId());
 		}
 
 		new(handle) CScriptHandle(obj, typeInfo);
+
+		if(obj)
+			reader->GetEngine()->ReleaseScriptObject(obj, typeInfo);
 	}
 #endif
 
@@ -436,9 +452,12 @@ namespace Zodiac
 		auto typeInfo = reader->LoadTypeInfo(typeId, false);
 
 		void * obj{};
-		reader->LoadScriptObject(&obj, typeInfo->GetTypeId(), false);
+		reader->LoadScriptObject(&obj, typeInfo->GetTypeId());
 
 		new(handle) CScriptWeakRef(obj, typeInfo);
+
+		if(obj)
+			reader->GetEngine()->ReleaseScriptObject(obj, typeInfo);
 	}
 #endif
 
@@ -447,36 +466,36 @@ namespace Zodiac
 		(void)zodiac;
 
 #ifdef SCRIPTANY_H
-		zodiac->RegisteredRefType<AS_NAMESPACE_QUALIFIER CScriptAny>("any");
+		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptAny>("any");
 #endif
 
 #ifdef SCRIPTARRAY_H
-		zodiac->RegisteredRefType<AS_NAMESPACE_QUALIFIER CScriptArray>("array<T>");
+		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptArray>("array<T>");
 #endif
 
 #ifdef SCRIPTDICTIONARY_H
-		zodiac->RegisteredRefType<AS_NAMESPACE_QUALIFIER CScriptDictionary>("dictionary");
-		zodiac->RegisteredValueType<AS_NAMESPACE_QUALIFIER CScriptDictValue>("dictionaryValue");
+		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptDictionary>("dictionary");
+		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptDictValue>("dictionaryValue");
 #endif
 
 #ifdef SCRIPTFILE_H
-		zodiac->RegisteredRefType<AS_NAMESPACE_QUALIFIER CScriptFile>("file");
+		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptFile>("file");
 #endif
 
 #ifdef SCRIPTGRID_H
-		zodiac->RegisteredRefType<AS_NAMESPACE_QUALIFIER CScriptGrid>("grid");
+		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptGrid>("grid");
 #endif
 
 #ifdef SCRIPTSTDSTRING_H
-		zodiac->RegistererValueType<std::string>("string");
+		zodiac->RegisterValueType<std::string>("string");
 #endif
 
 #ifdef SCRIPTHANDLE_H
-		zodiac->RegisteredValueType<AS_NAMESPACE_QUALIFIER CScriptHandle>("ref");
+		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptHandle>("ref");
 #endif
 
 #ifdef SCRIPTWEAKREF_H
-		zodiac->RegisteredValueType<AS_NAMESPACE_QUALIFIER CScriptWeakRef>("weakref");
+		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptWeakRef>("weakref");
 #endif
 	}
 

@@ -2,6 +2,7 @@
 #ifdef HAVE_ZODIAC
 #include "z_zodiacwriter.h"
 #include "z_zodiac.h"
+#include "z_zodiaccontext.h"
 #include <stdexcept>
 #include <cstring>
 #include <cassert>
@@ -26,6 +27,7 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_modules			= (zCModule const*)(m_mmap.GetAddress() + m_header->moduleDataOffset);
 	m_typeInfo			= (zCTypeInfo const*)(m_mmap.GetAddress() + m_header->typeInfoOffset);
 	m_globals			= (zCGlobalInfo const*)(m_mmap.GetAddress() + m_header->globalsOffset);
+	m_functions			= (zCFunction const*)(m_mmap.GetAddress() + m_header->functionTableOffset);
 	m_loadedObjects.reset(new LoadedInfo[addressTableLength()]);
 	memset(m_loadedObjects.get(), 0, addressTableLength() * sizeof(void*));
 
@@ -79,15 +81,8 @@ const char * zCZodiacReader::Verify() const
 //-----------------------
 //  CHECK MODULES
 //----------------------
-
 	if(m_modules + moduleDataLength() > end)
 		return "Buffer overrun: module table";
-
-	if(m_typeInfo + typeInfoLength() > end)
-		return "Buffer overrun: type info";
-
-	if(m_globals + globalsLength() > end)
-		return "Buffer overrun: global variables";
 
 	for(uint32_t i = 0; i < moduleDataLength(); ++i)
 	{
@@ -113,8 +108,46 @@ const char * zCZodiacReader::Verify() const
 	}
 
 //-----------------------
+//  CHECK Functions
+//----------------------
+	if(m_functions + functionTableLength() > end)
+		return "Buffer overrun: function table";
+
+	for(uint32_t i = 0; i < functionTableLength(); ++i)
+	{
+		if(m_functions[i].delegateAddress > addressTableLength())
+		{
+			return "Buffer overrun: entry id in function";
+		}
+
+		if(m_functions[i].delegateTypeId > typeInfoLength())
+		{
+			return "Buffer overrun: delegate id in function";
+		}
+
+		if(m_functions[i].module > stringTableLength())
+		{
+			return "Buffer overrun: module id in function";
+		}
+
+		if( m_functions[i].objectType > typeInfoLength())
+		{
+			return "Buffer overrun: typeId in function";
+		}
+
+		if(m_functions[i].declaration > stringTableLength())
+		{
+			return "Buffer overrun: declaration in function";
+		}
+
+	}
+
+//-----------------------
 //  CHECK Globals
 //----------------------
+	if(m_globals + globalsLength() > end)
+		return "Buffer overrun: global variables";
+
 	for(uint32_t i = 0; i < globalsLength(); ++i)
 	{
 		if(m_globals[i].name > stringTableLength())
@@ -131,17 +164,14 @@ const char * zCZodiacReader::Verify() const
 		{
 			return "Buffer overrun: entry id in global";
 		}
-
-		if( m_globals[i].typeId & asTYPEID_MASK_OBJECT
-		&& (m_globals[i].typeId & asTYPEID_MASK_SEQNBR) > typeInfoLength())
-		{
-			return "Buffer overrun: typeId in global variable";
-		}
 	}
 
 //-----------------------
 //  CHECK TypeInfo
 //----------------------
+	if(m_typeInfo + typeInfoLength() > end)
+		return "Buffer overrun: type info";
+
 	for(uint32_t i = 0; i < typeInfoLength(); ++i)
 	{
 		if(m_typeInfo[i].name > stringTableLength())
@@ -213,7 +243,7 @@ void zCZodiacReader::RestoreGlobalVariables(asIScriptEngine * engine)
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
 			if(global)
-				Restore(mod->GetAddressOfGlobalVar(j), typeId, global->address, global->typeId);
+				LoadScriptObject(mod->GetAddressOfGlobalVar(j), global->address, typeId);
 		}
 	}
 }
@@ -287,29 +317,6 @@ const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
 			engine->GetModuleByIndex(i)->BindAllImportedFunctions();
 		}
 	}
-
-
-//create lookup table
-#if LOOKUP_TABLE
-	if((maxTypeId & asTYPEID_MASK_OBJECT))
-	{
-		maxTypeId &= asTYPEID_MASK_SEQNBR;
-
-		m_storedFromAsTypeId.reset(new uint32_t[maxTypeId]);
-		memset(&m_storedFromAsTypeId[0], 0, sizeof(uint32_t) * maxTypeId);
-
-		for(uint32_t i = 0; i < typeInfoLength(); ++i)
-		{
-			auto asTypeId = m_asTypeIdFromStored[i];
-
-			if(asTypeId & asTYPEID_MASK_OBJECT)
-			{
-				assert(m_storedFromAsTypeId[m_asTypeIdFromStored[i] & asTYPEID_MASK_SEQNBR] == 0);
-				m_storedFromAsTypeId[m_asTypeIdFromStored[i] & asTYPEID_MASK_SEQNBR] = i;
-			}
-		}
-	}
-#endif
 
 	zCProperty const* pBegin, * pEnd;
 	GetProperties(-1, pBegin, pEnd);
@@ -467,40 +474,223 @@ void zCZodiacReader::GetProperties(int typeId, zCProperty const*& begin, zCPrope
 	}
 }
 
-void zCZodiacReader::LoadScriptObject(void *, uint address, uint asTypeId, bool RefCount)
+
+bool zCZodiacReader::RestoreAppObject(void * dst, int address, uint asTypeId)
 {
-	if(address >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
+	if(!(asTypeId & asTYPEID_APPOBJECT))
+		return false;
 
+	if(RestoreFunction((void**)dst, address, GetEngine()->GetTypeInfoById(asTypeId)))
+		return true;
 
+///registered thing?
+	auto entry = m_parent->GetTypeEntryFromAsTypeId(asTypeId);
 
+	if(!entry)
+		throw Exception::zZE_UnknownEncodingProtocol;
 
+	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
+
+//POD
+	if(!entry->onLoad)
+		memcpy(dst, src, entry->byteLength);
+	else
+	{
+		m_loadedObjects[address].zTypeId  = entry->zTypeId;
+		m_loadedObjects[address].asTypeId = entry->asTypeId;
+
+		zIFileDescriptor::ReadSubFile(m_file, m_entries[address].offset, m_entries[address].byteLength);
+
+		void * tmp;
+		(entry->onLoad)(this, &tmp, m_loadedObjects[address].zTypeId);
+
+		m_loadedObjects[address].ptr = tmp;
+		*((void**)dst) = m_loadedObjects[address].ptr;
+	}
+
+	return true;
 
 }
 
+void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
+{
+//object address 0 is nullptr so negative values aren't considered
+	if((uint32_t)address >= addressTableLength())
+		throw Exception::zZE_BadObjectAddress;
+
+//if the owner is non-zero restore the owner
+	if(m_entries[address].owner)
+	{
+		void * ptr;
+		auto ownr = m_entries[address].owner;
+		auto ownrTypeId =  m_asTypeIdFromStored[m_entries[ownr].typeId];
+
+//load owner if it isn't loaded (check to avoid addreffing it i guess)
+		if(!m_loadedObjects[ownr].ptr)
+		{
+			LoadScriptObject(&ptr, ownr, ownrTypeId | asTYPEID_OBJHANDLE);
+			m_loadedObjects[ownr].needRelease += 1;
+		}
+	}
+
+	auto & loaded = m_loadedObjects[address];
+
+//it is a handle i suppose
+	if(loaded.ptr)
+	{
+		assert(loaded.asTypeId & (asTYPEID_SCRIPTOBJECT|asTYPEID_APPOBJECT));
+
+		auto engine = GetEngine();
+		engine->RefCastObject(m_loadedObjects[address].ptr, engine->GetTypeInfoById(loaded.asTypeId), engine->GetTypeInfoById(asTypeId), (void**)dst);
+
+		if(*(void**)dst == nullptr)
+			throw Exception::zZE_ObjectRestoreTypeMismatch;
+
+		return;
+	}
+//it loaded as nullptr
+	else if(loaded.asTypeId & asTYPEID_OBJHANDLE)
+	{
+		*(void**)dst = nullptr;
+		return;
+	}
+
+	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
+
+	if(RestoreAppObject(dst, address, asTypeId))
+		return;
+	else if(asTypeId <= asTYPEID_DOUBLE && m_entries[address].typeId <= asTYPEID_DOUBLE)
+	{
+		RestorePrimitive(dst, asTypeId, src, m_entries[address].typeId);
+		return;
+	}
+
+//should always be a script object by this point
+	assert(!(asTypeId & asTYPEID_SCRIPTOBJECT));
+
+//---------------------------------------------------------
+// Script Object
+//---------------------------------------------------------
+	auto _typeId   = m_asTypeIdFromStored[m_entries[address].typeId];
+	auto _typeInfo = GetEngine()->GetTypeInfoById(_typeId);
+	auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
+
+	if(asTypeId & asTYPEID_OBJHANDLE)
+	{
+//impossible??
+		assert(typeInfo->GetFactoryCount() != 0);
+
+		m_loadedObjects[address].asTypeId = _typeId;
+		m_loadedObjects[address].zTypeId  = zIZodiac::GetTypeId<asIScriptObject>();
+		m_loadedObjects[address].ptr	  = GetEngine()->CreateUninitializedScriptObject(_typeInfo);
+		++m_progress;
+
+		GetEngine()->RefCastObject(m_loadedObjects[address].ptr, _typeInfo, typeInfo, (void**)dst);
+
+		if(*(void**)dst == nullptr)
+			throw Exception::zZE_ObjectRestoreTypeMismatch;
+
+		m_loadedObjects[address].needRelease = 1;
+//dereference to set up script object...
+		dst = *(void**)dst;
+	}
+	else if(m_loadedObjects[address].ptr != dst)
+	{
+//populate table
+		assert(m_loadedObjects[address].ptr == nullptr);
+
+		m_loadedObjects[address].ptr	 = dst;
+		m_loadedObjects[address].zTypeId = zIZodiac::GetTypeId<asIScriptObject>();
+		m_loadedObjects[address].asTypeId = asTypeId;
+		++m_progress;
+	}
+
+//---------------------------------------------------------
+// set up script object
+//---------------------------------------------------------
+	auto & zTypeInfo = m_typeInfo[m_entries[address].typeId];
+	asIScriptObject * ref = (asIScriptObject*)dst;
+
+	const auto begin = &m_properties[zTypeInfo.propertiesBegin];
+	const auto end  = begin + zTypeInfo.propertiesLength;
+
+//first loop populate lookup table
+	for(auto p = begin; p < end; ++p)
+	{
+		auto typeId   = m_asTypeIdFromStored[p->readType];
+		auto offset   = ref->GetAddressOfProperty(p->propertyId);
+		uint32_t read = *(uint32_t*)((uint8_t*)src + p->readOffset);
+
+//app objects don't have an owner so it shouldn't cause an infinite loop
+		if((typeId & asTYPEID_SCRIPTOBJECT) && !(typeId & asTYPEID_OBJHANDLE))
+		{
+			if(m_loadedObjects[read].ptr)
+			{
+				throw Exception::zZE_DoubleLoad;
+			}
+
+			m_loadedObjects[read].ptr	   = offset;
+			m_loadedObjects[read].zTypeId  = zIZodiac::GetTypeId<asIScriptObject>();
+			m_loadedObjects[read].asTypeId = ref->GetPropertyTypeId(p->propertyId);
+			++m_progress;
+		}
+	}
+
+//Restore object contents
+	for(auto p = begin; p < end; ++p)
+	{
+		auto offset   = ref->GetAddressOfProperty(p->propertyId);
+		auto typeId   = ref->GetPropertyTypeId(p->propertyId);
+
+		void * read = ((uint8_t*)src + p->readOffset);
+
+//app objects don't have an owner so it shouldn't cause an infinite loop
+		RestoreScriptObject(offset, read, typeId);
+	}
+}
+
+bool zCZodiacReader::RestoreFunction(void ** dst, uint32_t handle, asITypeInfo * typeInfo)
+{
+	if(!(typeInfo && typeInfo->GetFuncdefSignature()))
+		return false;
+
+	auto delegate = LoadFunction(handle);
+	GetEngine()->RefCastObject(delegate, delegate->GetDelegateObjectType(), typeInfo, dst);
+
+//it was addreffed in the ref cast
+	if(delegate) delegate->Release();
+
+	if(delegate && !*dst)
+		throw Exception::zZE_ObjectRestoreTypeMismatch;
+
+	return true;
+}
+
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-void zCZodiacReader::LoadScriptObject(void * address, uint asTypeId, bool RefCount)
+void zCZodiacReader::LoadScriptObject(void * dst, uint asTypeId)
+{
+	RestoreScriptObject(dst, m_mmap.GetAddress() + m_file->AbsoluteTell(), asTypeId);
+}
+
+void zCZodiacReader::RestoreScriptObject(void * dst, void const* src, uint asTypeId)
 {
 	if(asTypeId <= asTYPEID_DOUBLE)
-		m_file->Read(address, GetEngine()->GetSizeOfPrimitiveType(asTypeId));
-	else if((asTypeId & asTYPEID_OBJHANDLE)
-	|| (asTypeId & asTYPEID_SCRIPTOBJECT))
 	{
-		uint32_t handle;
-		m_file->Read(&handle, sizeof(handle));
-		LoadScriptObject(address, handle, asTypeId, RefCount);
+		memcpy(dst, src, GetEngine()->GetSizeOfPrimitiveType(asTypeId));
+		return;
 	}
-//the next thing is an address
+	else if((asTypeId & asTYPEID_OBJHANDLE) || (asTypeId & asTYPEID_SCRIPTOBJECT))
+	{
+		LoadScriptObject(dst, *(uint32_t*)src, asTypeId);
+	}
 	else
 	{
 		auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
 
-//funcdef next thing is an address
+//funcdef, next thing is an address
 		if(typeInfo && typeInfo->GetFuncdefSignature())
 		{
-			uint32_t handle;
-			m_file->Read(&handle, sizeof(handle));
-			LoadScriptObject(address, handle, asTypeId, RefCount);
+			RestoreFunction((void**)dst, *(uint32_t*)src, typeInfo);
 			return;
 		}
 
@@ -510,254 +700,154 @@ void zCZodiacReader::LoadScriptObject(void * address, uint asTypeId, bool RefCou
 
 		if(!entry->onLoad)
 		{
-			m_file->Read(address, entry->byteLength);
+			memcpy(dst, src, entry->byteLength);
 		}
 		else
 		{
-			uint32_t handle;
-			m_file->Read(&handle, sizeof(handle));
-			LoadScriptObject(address, handle, asTypeId, RefCount);
+			LoadScriptObject(dst, *(uint32_t*)src, asTypeId);
 		}
 	}
 }
 
-void * zCZodiacReader::GetObjectAddress(uint32_t id, int * zType)
+asITypeInfo * zCZodiacReader::LoadTypeInfo(int id, bool RefCount)
 {
-	if(id >= addressTableLength())
-	{
+	if(id < 0) return nullptr;
+
+	if((uint)id > typeInfoLength())
 		throw Exception::zZE_BadObjectAddress;
-		return nullptr;
+
+	auto typeId = m_asTypeIdFromStored[id];
+	auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
+
+	if(typeInfo && RefCount)
+		typeInfo->AddRef();
+
+	return typeInfo;
+}
+
+asIScriptFunction * zCZodiacReader::LoadFunction(int id)
+{
+	if(id < 0) return nullptr;
+	if((uint)id > functionTableLength())
+		throw Exception::zZE_BadObjectAddress;
+
+	if(m_loadedFunctions == nullptr)
+	{
+		m_loadedFunctions.reset(new void*[functionTableLength()]);
+		memset(&m_loadedFunctions[0], 0, sizeof(m_loadedFunctions[0]) * functionTableLength());
 	}
 
-	if(zType) *zType = m_loadedObjects[id].zTypeId;
+	if(m_loadedFunctions[id] != nullptr)
+	{
+		asIScriptFunction * func = reinterpret_cast<asIScriptFunction*>(m_loadedFunctions[id]);
+		func->AddRef();
+		return func;
+	}
+
+	asIScriptFunction * func = nullptr;
+	asITypeInfo * typeInfo =  LoadTypeInfo(m_functions[id].objectType, false);
+
+	if(typeInfo)
+	{
+//should it be virtual???
+		func = typeInfo->GetMethodByDecl(LoadString(m_functions[id].declaration));
+
+	}
+	else if(m_functions[id].module)
+	{
+		auto module = GetEngine()->GetModule(LoadString(m_functions[id].module), asGM_ONLY_IF_EXISTS);
+
+		if(!module)
+			throw Exception::zZE_ModuleDoesNotExist;
+
+		func = module->GetFunctionByDecl(LoadString(m_functions[id].declaration));
+	}
+	else
+	{
+		func = GetEngine()->GetGlobalFunctionByDecl(LoadString(m_functions[id].declaration));
+	}
+
+	if(func == nullptr)
+		throw Exception::zZE_BadObjectAddress;
+
+//is it a delegate?
+	if(!m_functions[id].delegateAddress)
+		func->AddRef();
+	else
+	{
+		void * delegateObject{};
+		LoadScriptObject(&delegateObject, m_functions[id].delegateAddress);
+		asIScriptFunction * delegate = GetEngine()->CreateDelegate(func, delegateObject);
+
+		if(!delegate)
+			throw Exception::zZE_BadFunctionInfo;
+	}
+
+	m_loadedFunctions[id] = func;
+	++m_progress;
+	return func;
+}
+
+
+asIScriptContext * zCZodiacReader::LoadContext(int id)
+{
+	if(id <= 0)
+		return nullptr;
+//object address 0 is nullptr so negative values aren't considered
+	if((uint32_t)id >= addressTableLength())
+		throw Exception::zZE_BadObjectAddress;
+
+	if(m_loadedObjects[id].ptr != nullptr)
+	{
+		if(m_loadedObjects[id].zTypeId != zIZodiac::GetTypeId<asIScriptContext>())
+			throw Exception::zZE_ObjectRestoreTypeMismatch;
+
+		asIScriptContext * context = reinterpret_cast<asIScriptContext*>(m_loadedObjects[id].ptr);
+		context->AddRef();
+		return context;
+	}
+
+	asIScriptContext * context = GetEngine()->CreateContext();
+	m_loadedObjects[id].ptr = context;
+	m_loadedObjects[id].zTypeId = zIZodiac::GetTypeId<asIScriptContext>();
+
+	zCEntry const* entry = &m_entries[id];
+	zIFileDescriptor::ReadSubFile sub_file(m_file, entry->offset, entry->byteLength);
+
+	int real_type{};
+	ZodiacLoad(this, context, real_type);
+	++m_progress;
+
+	return context;
+}
+
+void * zCZodiacReader::LoadObject(int id, zLOAD_FUNC_t load_func, int & actualType)
+{
+	if(id <= 0)
+		return nullptr;
+//object address 0 is nullptr so negative values aren't considered
+	if((uint32_t)id >= addressTableLength())
+		throw Exception::zZE_BadObjectAddress;
+
+	if(m_loadedObjects[id].ptr == nullptr && m_loadedObjects[id].zTypeId == 0)
+	{
+		zCEntry const* entry = &m_entries[id];
+		zIFileDescriptor::ReadSubFile sub_file(m_file, entry->offset, entry->byteLength);
+
+//ensure stack corruption if something goes wrong, (fail quickly if behavior is undefined)
+		void * dst{};
+		load_func(this, &dst, actualType);
+
+		m_loadedObjects[id].ptr = dst;
+		m_loadedObjects[id].zTypeId = actualType;
+		m_loadedObjects[id].asTypeId = -1;
+
+		++m_progress;
+	}
+
+	actualType = m_loadedObjects[id].zTypeId;
 	return m_loadedObjects[id].ptr;
 }
-
-bool   zCZodiacReader::StoreObjectAddress(uint32_t id, void * ptr, int zType, int asType)
-{
-	if(id >= addressTableLength())
-	{
-		throw Exception::zZE_BadObjectAddress;
-		return false;
-	}
-
-	 if(m_loadedObjects[id].zTypeId != 0)
-		 throw Exception::zZE_DuplicateObjectAddress;
-
-	 if(asType < 0)
-		 asType = m_parent->GetAsTypeIdFromZTypeId(zType);
-
-	 m_loadedObjects[id].ptr = ptr;
-	 m_loadedObjects[id].zTypeId = (ptr == nullptr? -1 : zType);
-	 m_loadedObjects[id].asTypeId = asType;
-
-	 return true;
-}
-
-
-
-zIFileDescriptor::ReadSubFile zCZodiacReader::GetSubFile(uint32_t id)
-{
-	if(id >= addressTableLength())
-	{
-		throw Exception::zZE_BadObjectAddress;
-		return zIFileDescriptor::ReadSubFile(m_file, 0, ~0u);
-	}
-
-	return zIFileDescriptor::ReadSubFile(m_file, m_entries[id].offset, m_entries[id].byteLength);
-}
-
-bool zCZodiacReader::RestorePOD(void * ptr, int dstTypeId, uint32_t address, int zTypeId)
-{
-	int srcTypeId = m_asTypeIdFromStored[zTypeId];
-
-	if(srcTypeId <= asTYPEID_DOUBLE && dstTypeId <= asTYPEID_DOUBLE)
-	{
-		RestorePrimitive(ptr, dstTypeId, src, srcTypeId);
-		return true;
-	}
-
-
-
-	if(address >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
-
-	if(m_loadedObjects[address].asTypeId != 0
-	&& m_loadedObjects[address].asTypeId != srcTypeId)
-		throw Exception::zZE_ObjectRestoreTypeMismatch;
-
-	auto native_entry = m_parent->GetTypeEntryFromAsTypeId(srcTypeId);
-
-	if(m_loadedObjects[address].asTypeId == 0)
-	{
-		m_loadedObjects[address].asTypeId = srcTypeId;
-		m_loadedObjects[address].zTypeId  = (native_entry? native_entry->zTypeId : 0L);
-	}
-
-	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
-
-	auto engine = m_parent->GetEngine();
-
-	if( (dstTypeId & ~asTYPEID_OBJHANDLE) != (srcTypeId & ~asTYPEID_OBJHANDLE) )
-		throw Exception::zZE_ObjectRestoreTypeMismatch;
-
-	auto typeInfo = engine->GetTypeInfoById(srcTypeId);
-
-//it is an appobject...
-	if(dstTypeId & asTYPEID_APPOBJECT)
-	{
-		if(m_loadedObjects[address].ptr)
-		{
-			engine->AddRefScriptObject(m_loadedObjects[address].ptr, typeInfo);
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-			return;
-		}
-
-		auto entry = m_parent->GetTypeEntryFromAsTypeId(dstTypeId);
-
-//POD
-		if(!entry->onLoad)
-			memcpy(ptr, src, entry->byteLength);
-		else
-		{
-			m_loadedObjects[address].zTypeId = -1;
-
-			zIFileDescriptor::ReadSubFile(m_file, m_entries[address].offset, m_entries[address].byteLength);
-			m_loadedObjects[address].ptr = (entry->onLoad)(this, srcTypeId);
-
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-		}
-
-		return;
-	}
-
-
-	if(dstTypeId & asTYPEID_OBJHANDLE)
-	{
-		if(m_loadedObjects[address].ptr)
-		{
-			engine->AddRefScriptObject(m_loadedObjects[address].ptr, typeInfo);
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-			return true;
-		}
-	}
-
-	return false;
-}
-
-void zCZodiacReader::Restore(void * ptr, int dstTypeId, uint32_t address, int zTypeId)
-{
-	if(RestorePOD(ptr, dstTypeId, address, zTypeId))
-		return;
-
-	int srcTypeId = m_asTypeIdFromStored[zTypeId];
-
-	if(address >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
-
-	if(m_loadedObjects[address].asTypeId != 0
-	&& m_loadedObjects[address].asTypeId != srcTypeId)
-		throw Exception::zZE_ObjectRestoreTypeMismatch;
-
-	auto native_entry = m_parent->GetTypeEntryFromAsTypeId(srcTypeId);
-
-	if(m_loadedObjects[address].asTypeId == 0)
-	{
-		m_loadedObjects[address].asTypeId = srcTypeId;
-		m_loadedObjects[address].zTypeId  = (native_entry? native_entry->zTypeId : 0L);
-	}
-
-	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
-
-	if(srcTypeId <= asTYPEID_DOUBLE && dstTypeId <= asTYPEID_DOUBLE)
-	{
-		RestorePrimitive(ptr, dstTypeId, src, srcTypeId);
-		return;
-	}
-
-	auto engine = m_parent->GetEngine();
-
-	if( (dstTypeId & ~asTYPEID_OBJHANDLE) != (srcTypeId & ~asTYPEID_OBJHANDLE) )
-		throw Exception::zZE_ObjectRestoreTypeMismatch;
-
-	auto typeInfo = engine->GetTypeInfoById(srcTypeId);
-
-//it is an appobject...
-	if(dstTypeId & asTYPEID_APPOBJECT)
-	{
-		if(m_loadedObjects[address].ptr)
-		{
-			engine->AddRefScriptObject(m_loadedObjects[address].ptr, typeInfo);
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-			return;
-		}
-
-		auto entry = m_parent->GetTypeEntryFromAsTypeId(dstTypeId);
-
-//POD
-		if(!entry->onLoad)
-			memcpy(ptr, src, entry->byteLength);
-		else
-		{
-			m_loadedObjects[address].zTypeId = -1;
-
-			zIFileDescriptor::ReadSubFile(m_file, m_entries[address].offset, m_entries[address].byteLength);
-			m_loadedObjects[address].ptr = (entry->onLoad)(this, srcTypeId);
-
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-		}
-
-		return;
-	}
-
-
-	if(dstTypeId & asTYPEID_OBJHANDLE)
-	{
-		if(m_loadedObjects[address].ptr)
-		{
-			engine->AddRefScriptObject(m_loadedObjects[address].ptr, typeInfo);
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-			return;
-		}
-
-		if(typeInfo->GetFactoryCount() == 0)
-		{
-			///uuuuuuum
-			assert(false);
-		}
-		else
-		{
-			m_loadedObjects[address].asTypeId = srcTypeId;
-			m_loadedObjects[address].zTypeId  = -1;
-			m_loadedObjects[address].ptr	  = engine->CreateUninitializedScriptObject( typeInfo );
-			*((void**)ptr) = m_loadedObjects[address].ptr;
-		//dereference it so we can assign something to it??
-			ptr = *((void**)ptr);
-		}
-	}
-
-	if(dstTypeId & asTYPEID_SCRIPTOBJECT)
-	{
-		auto & zTypeInfo = m_typeInfo[zTypeId];
-
-		asIScriptObject * ref = (asIScriptObject*)ptr;
-
-		const auto begin = &m_properties[zTypeInfo.propertiesBegin];
-		const auto end  = begin + zTypeInfo.propertiesLength;
-
-		for(auto p = begin; p < end; ++p)
-		{
-			auto typeId = m_asTypeIdFromStored[p->readType];
-
-//POD doesn't enter the object table
-			if(typeId <= asTYPEID_DOUBLE)
-			{
-				Restore(ref->GetAddressOfProperty(p->propertyId), p->writeType, (uint8_t*)src + p->readOffset, p->readType);
-			}
-		}
-	}
-}
-
 
 template<typename T>
 static T ReadPrimitive(void const* address, int asTypeId)

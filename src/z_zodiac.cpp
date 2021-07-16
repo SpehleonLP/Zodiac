@@ -90,7 +90,7 @@ void    zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	}
 }
 
-int  zCZodiac::RegisteredTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace)
+int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace)
 {
 	for(auto & c : m_typeList)
 	{
@@ -108,6 +108,8 @@ int  zCZodiac::RegisteredTypeCallback(uint32_t zTypeId, uint32_t byteLength, con
 	entry.onLoad = onLoad;
 
 	m_typeList.push_back(entry);
+
+	return asSUCCESS;
 }
 
 int   zCZodiac::GetAsTypeIdFromZTypeId(int zTypeId) const
@@ -133,27 +135,24 @@ int  zCZodiac::GetZTypeIdFromAsTypeId(int asTypeId) const
 	return -1;
 }
 
-
-zSAVE_FUNC_t zCZodiac::GetSaveCallback(uint32_t asTypeId, uint32_t * byteLength)
+zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId)
 {
-	assert(asTypeId & asTYPEID_APPOBJECT);
-
-	if(byteLength) *byteLength = m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].byteLength;
-
-	if(m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].onLoad)
-		return m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].onSave;
+	for(auto & c : m_typeList)
+	{
+		if(c.asTypeId == asTypeId)
+			return &c;
+	}
 
 	return nullptr;
 }
 
-zLOAD_FUNC_t zCZodiac::GetLoadCallback(uint32_t asTypeId, uint32_t * byteLength)
+zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromZTypeId(int zTypeId)
 {
-	assert(asTypeId & asTYPEID_APPOBJECT);
-
-	if(byteLength) *byteLength = m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].byteLength;
-
-	if(m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].onLoad)
-		return m_typeList[asTypeId & asTYPEID_MASK_SEQNBR].onLoad;
+	for(auto & c : m_typeList)
+	{
+		if(c.zTypeId == zTypeId)
+			return &c;
+	}
 
 	return nullptr;
 }

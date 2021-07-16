@@ -14,11 +14,11 @@ public:
 	zCMemoryMap(zIFileDescriptor * descriptor);
 	~zCMemoryMap();
 
-	char	 const*		GetAddress() const { return (char*)m_addr; }
+	char	 const*		GetAddress() const { return (char*)m_contents; }
 	unsigned long long  GetLength() const { return m_length; }
 
 private:
-	void			    * m_addr;
+	void			    * m_contents;
 	unsigned long long	  m_length;
 };
 

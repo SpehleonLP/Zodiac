@@ -1,6 +1,7 @@
 #include "z_zodiacwriter.h"
 #ifdef HAVE_ZODIAC
 #include "z_zodiac.h"
+#include "z_zodiaccontext.h"
 #include <cstring>
 #include <cassert>
 
@@ -189,7 +190,7 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 		else
 		{
 			int real_type;
-			(entry->onSave)(this, ref, &real_type);
+			(entry->onSave)(this, ref, real_type);
 		}
 	}
 }
@@ -248,12 +249,12 @@ void zCZodiacWriter::ProcessQueue()
 void zCZodiacWriter::WriteObject(Node & n, uint32_t * byteLength)
 {
 	m_file->seek(0, zFILE_END);
-	zIFileDescriptor::WriteSubFile sub_file(m_file, m_file->tell(), byteLength);
+	zIFileDescriptor::WriteSubFile sub_file(m_file, byteLength);
 
 	if(n.save_func)
 	{
 		int real_type;
-		(n.save_func)(this, n.address, &real_type);
+		(n.save_func)(this, n.address, real_type);
 	}
 	else if(n.asTypeId > 0)
 	{
@@ -271,7 +272,7 @@ void zCZodiacWriter::WriteObject(Node & n, uint32_t * byteLength)
 		if(entry->onSave)
 		{
 			int real_type;
-			(entry->onSave)(this, n.address, &real_type);
+			(entry->onSave)(this, n.address, real_type);
 		}
 		else
 		{
@@ -529,7 +530,7 @@ void zCZodiacWriter::WriteSaveData(zWRITER_FUNC_t func, void * userData)
 
 	if(func)
 	{
-		zIFileDescriptor::WriteSubFile sub_file(m_file, m_file->tell(), &m_header.saveDataByteLength);
+		zIFileDescriptor::WriteSubFile sub_file(m_file, &m_header.saveDataByteLength);
 		func(this, userData);
 	}
 }
@@ -604,7 +605,7 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 
 int zCZodiacWriter::SaveFunction(asIScriptFunction const* func)
 {
-	if(func == nullptr) return 0;
+	if(func == nullptr) return -1;
 
 //extract
 	auto type = func->GetDelegateObjectType();
@@ -622,8 +623,7 @@ int zCZodiacWriter::SaveFunction(asIScriptFunction const* func)
 	function.delegateTypeId = SaveTypeInfo(type);
 	function.module         = module? SaveString(module->GetName()) : 0;
 	function.objectType     = SaveTypeInfo(func->GetObjectType());
-	function.nameSpace      = SaveString(func->GetNamespace());
-	function.declaration    = SaveString(func->GetDeclaration(false, false, false));
+	function.declaration    = SaveString(func->GetDeclaration(false, true, false));
 
 	for(uint32_t i = 0; i < m_functionList.size(); ++i)
 	{
@@ -646,7 +646,7 @@ int zCZodiacWriter::SaveContext(asIScriptContext const* id)
 	node.asTypeId = -1;
 	node.zTypeId  = zIZodiac::GetTypeId<asIScriptContext>();
 	node.owner    = nullptr;
-	node.save_func = nullptr; //ZODIAC_GETSAVEFUNC(asIScriptContext);
+	node.save_func = ZODIAC_GETSAVEFUNC(asIScriptContext);
 
 	return EnqueueNode(node);
 }

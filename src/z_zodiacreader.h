@@ -37,15 +37,15 @@ public:
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
 
-	void LoadScriptObject(void *, uint address, uint asTypeId, bool RefCount) override;
+	void LoadScriptObject(void *, int address, uint asTypeId) override;
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	void LoadScriptObject(void *, uint asTypeId, bool RefCount) override;
+	void LoadScriptObject(void *, uint asTypeId) override;
 
-	const char * LoadString(uint id) const override { return  id < stringAddressCount()? &m_stringTable[m_stringAddresses[id]] : nullptr;  }
-	asITypeInfo * LoadTypeInfo(uint id, bool RefCount) override;
-	asIScriptFunction * LoadFunction(uint id, bool RefCount) override;
-	asIScriptContext * LoadContext(uint id, bool RefCount) override;
-	void * LoadObject(uint id, zLOAD_FUNC_t, int * actualType) override;
+	const char * LoadString(int id) const override { return  (uint32_t)id < stringAddressCount()? &m_stringTable[m_stringAddresses[id]] : nullptr;  }
+	asITypeInfo * LoadTypeInfo(int id, bool RefCount) override;
+	asIScriptFunction * LoadFunction(int id) override;
+	asIScriptContext * LoadContext(int id) override;
+	void * LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
 
 	const char * Verify() const;
 
@@ -56,8 +56,11 @@ friend class zCZodiac;
 	void RestoreGlobalVariables(asIScriptEngine *);
 
 	static void RestorePrimitive(void *, int dstTypeId, const void * address, int srcTypeId);
-	bool RestorePOD(void *, int dstTypeId, uint32_t address, int srcTypeId);
-	void Restore(void *, int dstTypeId, uint32_t address, int srcTypeId);
+//everything we can restore without updating the loading table
+	bool RestoreNoCreate(void *, uint32_t address, int asTypeId);
+	bool RestoreAppObject(void * dst, int address, uint asTypeId);
+	void RestoreScriptObject(void * dst, const void * src, uint asTypeId);
+	bool RestoreFunction(void ** dst, uint32_t handle, asITypeInfo * typeInfo);
 
 	zCZodiac * m_parent;
 	zIFileDescriptor * m_file;
@@ -71,6 +74,7 @@ friend class zCZodiac;
 	zCEntry		  const * m_entries;
 	zCGlobalInfo  const * m_globals;
 	zCTypeInfo    const * m_typeInfo;
+	zCFunction    const * m_functions;
 
 	struct Property
 	{
@@ -87,19 +91,15 @@ friend class zCZodiac;
 		void   * ptr;
 		int asTypeId;
 		int zTypeId;
+		int needRelease;
 	};
 
 	std::unique_ptr<int[]>		m_asTypeIdFromStored;
-
-#if LOOKUP_TABLE
-	std::unique_ptr<uint32_t[]>		m_storedFromAsTypeId;
-#endif
-
 	std::unique_ptr<LoadedInfo[]>	m_loadedObjects;
+	std::unique_ptr<void*[]>	m_loadedFunctions;
 
 	std::atomic<int> & m_progress;
 	std::atomic<int> & m_totalSteps;
-
 };
 
 }

@@ -38,13 +38,13 @@ struct TypeEntry;
 	void SetUserData(void * d) override { m_userData = d; };
 	void * GetUserData() const override { return m_userData; };
 
-	int   RegisteredTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) override;
+	int   RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) override;
 
 	int   GetAsTypeIdFromZTypeId(int zTypeId) const override;
 	int   GetZTypeIdFromAsTypeId(int asTypeId) const override;
 
-	TypeEntry const* GetTypeEntryFromAsTypeId(uint32_t asTypeId);
-	TypeEntry const* GetTypeEntryFromZTypeId(uint32_t zTypeId);
+	TypeEntry const* GetTypeEntryFromAsTypeId(int asTypeId);
+	TypeEntry const* GetTypeEntryFromZTypeId(int zTypeId);
 
 
 private:

@@ -1,9 +1,4 @@
-// This sample shows how to use co-routines with AngelScript. Co-routines
-// are threads that work together. When one yields the next one takes over.
-// This way they are always synchronized, which makes them much easier to
-// use than threads that run in parallel.
-
-#if 0
+// This sample shows how to use the zodiac
 
 #include <iostream>  // cout
 #include <assert.h>  // assert()
@@ -28,6 +23,9 @@
 
 #include "zodiac.h"
 #include <memory>
+
+//must be included after add_on-s
+#include "zodiac_addon.hpp"
 
 #define UINT unsigned int
 typedef unsigned int DWORD;
@@ -80,7 +78,7 @@ struct SaveData
 
 void WriteSaveDataFunc(Zodiac::zIZodiacWriter * writer, void* ptr)
 {
-	((SaveData*)ptr)->Context = writer->SaveObject<asIScriptContext>(ctx);
+	((SaveData*)ptr)->Context = writer->SaveContext(ctx);
 
 	auto file = writer->GetFile();
 	file->Write((SaveData*)ptr);
@@ -92,8 +90,9 @@ void ReadSaveDataFunc(Zodiac::zIZodiacReader * reader, void* ptr)
 	auto file = reader->GetFile();
 	file->Read((SaveData*)ptr);
 
-	ctx = reader->LoadObject<asIScriptContext>(((SaveData*)ptr)->Context );
+	ctx = reader->LoadContext(((SaveData*)ptr)->Context, /* AddRef it when loaded */ true);
 }
+
 
 int main(int argc, char **argv)
 {
@@ -124,10 +123,33 @@ int main(int argc, char **argv)
 	r = engine->RegisterGlobalFunction("void Print(string &in)", asFUNCTION(PrintString), asCALL_CDECL); assert( r >= 0 );
 	r = engine->RegisterGlobalFunction("void Suspend()", asFUNCTION(Suspend), asCALL_CDECL); assert( r >= 0 );
 
+//-------------------
+// create zodiac
+//--------------------
+
+	std::unique_ptr<Zodiac::zIZodiac> zodiac(Zodiac::zCreateZodiac(engine));
+	SaveData data;
+
+	zodiac->SetUserData(&data);
+	zodiac->SetReadSaveDataCallback(ReadSaveDataFunc);
+	zodiac->SetWriteSaveDataCallback(WriteSaveDataFunc);
+	
+	zodiac->SetProperty(Zodiac::zZP_SAVE_BYTECODE, true);
+//register add_on directory stuffs	
+	Zodiac::ZodiacRegisterAddons(zodiac.get());
+
+
+// try to restore
 	FILE * fp = fopen("save_file.z", "r");
 
-	if(fp == nullptr)
+	if(fp != nullptr)
 	{
+	//use pointer to fp to signify taking ownership and closing when the class is deleted
+		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
+		zodiac->LoadFromFile(file.get());
+	else
+	{
+// restore failed create context
 		asIScriptModule *mod = engine->GetModule("script", asGM_ALWAYS_CREATE);
 		r = mod->AddScriptSection("script", Script, strlen(Script));
 		r = mod->Build();
@@ -137,38 +159,22 @@ int main(int argc, char **argv)
 		asIScriptContext *ctx = mod->GetEngine()->RequestContext();
 		ctx->Prepare(func);
 	}
-	else
-	{
-		std::unique_ptr<Zodiac::zIZodiac> zodiac(Zodiac::zCreateZodiac(engine));
-		SaveData data;
-
-		zodiac->SetUserData(&data);
-		zodiac->SetReadSaveDataCallback(ReadSaveDataFunc);
-
-		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
-		zodiac->LoadFromFile(file.get());
-	}
 
 	ctx->Execute();
 
-	if(ctx->GetState() == asEXECUTION_SUSPENDED)
+// finished delete save
+	if(ctx->GetState() != asEXECUTION_SUSPENDED)
 	{
-		std::unique_ptr<Zodiac::zIZodiac> zodiac(Zodiac::zCreateZodiac(engine));
-		SaveData data;
-
-		zodiac->SetUserData(&data);
-		zodiac->SetWriteSaveDataCallback(WriteSaveDataFunc);
-
-		zodiac->SetProperty(Zodiac::zZP_SAVE_BYTECODE, true);
-
-		FILE * fp = fopen("save_file.z", "w");
-
-		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
-		zodiac->SaveToFile(file.get());
+		remove("save_file.z");	
 	}
+// suspended create save
 	else
 	{
-		remove("save_file.z");
+		FILE * fp = fopen("save_file.z", "w");
+
+//use pointer to fp to signify taking ownership and closing when the class is deleted
+		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
+		zodiac->SaveToFile(file.get());
 	}
 
 	// Shut down the engine
@@ -177,4 +183,3 @@ int main(int argc, char **argv)
 	return 0;
 }
 
-#endif

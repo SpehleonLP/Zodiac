@@ -24,8 +24,6 @@ zIFileDescriptor * FromCFile(FILE ** _it_)
 zCFile::zCFile(FILE* file, bool ownsFile) :
 	file(file), ownsFile(ownsFile)
 {
-	streamPos = ftell(file);
-
 	stackSize = 4;
 	stackPos = 0;
 	stack = (StackFrame*)malloc(sizeof(StackFrame)*stackSize);
@@ -43,36 +41,30 @@ zCFile::~zCFile()
 
 int zCFile::Read(void *ptr, uint size)
 {
-	auto end = size + streamPos;
+	auto end = size + ftell(file);
 
 	if(end > stack[stackPos].end)
 	{
 		errno = EIO;
-		size  = stack[stackPos].end - streamPos;
+		size  = stack[stackPos].end - ftell(file);
 	}
 
-	streamPos += size;
 	int r = fread(ptr, 1, size, file);
-
-	if((uint32_t)r != size)	streamPos = ftell(file);
 
 	return r;
 }
 
 int zCFile::Write(const void *ptr, uint size)
 {
-	auto end = size + streamPos;
+	auto end = size + ftell(file);
 
 	if(end > stack[stackPos].end)
 	{
 		errno = EIO;
-		size  = stack[stackPos].end - streamPos;
+		size  = stack[stackPos].end - ftell(file);
 	}
 
-	streamPos += size;
 	int r = fwrite(ptr, 1, size, file);
-
-	if((uint32_t)r != size)	streamPos = ftell(file);
 
 	return r;
 }
@@ -90,7 +82,7 @@ void zCFile::seek(int offset, Flags flags)
 		fseek(file, offset, SEEK_SET);
 		break;
 	case Flags::zFILE_CUR:
-		offset += streamPos;
+		offset += ftell(file);
 
 		if((uint32_t)offset < stack[stackPos].begin) offset = stack[stackPos].begin;
 		if((uint32_t)offset > stack[stackPos].end  ) offset = stack[stackPos].end;
@@ -108,20 +100,14 @@ void zCFile::seek(int offset, Flags flags)
 	default:
 		break;
 	}
-
-	streamPos = offset;
 }
 
 uint zCFile::tell() const
 {
-	assert(streamPos == ftell(file));
-	return streamPos - stack[stackPos].begin;
+	return ftell(file) - stack[stackPos].begin;
 }
 
-int      zCFile::GetFileDescriptor()
-{
-	return fileno(file);
-}
+uint zCFile::SubFileOffset() const { return stack[stackPos].begin; }
 
 void zCFile::PushSubFile(uint offset, uint byteLength)
 {
@@ -142,45 +128,31 @@ void zCFile::PushSubFile(uint offset, uint byteLength)
 		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize*3);
 	}
 
-	assert(ftell(file) == streamPos + stack[stackPos].begin);
-
 	stackPos++;
 	stack[stackPos].begin	= offset;
 	stack[stackPos].end		= byteLength;
-	stack[stackPos].restore = streamPos + stack[stackPos-1].begin;
+	stack[stackPos].restore = ftell(file);
 	stack[stackPos].byteLength = nullptr;
 
 	fseek(file, offset, SEEK_SET);
-	streamPos = offset;
 }
 
-void zCFile::PushSubFile(uint offset, uint * byteLength)
+void zCFile::PushSubFile(uint * byteLength)
 {
-	offset = offset+stack[stackPos].begin;
-	byteLength = offset+byteLength;
-
-//need to check becuase of overflows
-	if(offset < stack[stackPos].begin)
-	{
-		throw std::logic_error("bad sub file address");
-	}
-
 	if(stackPos+1 >= stackSize)
 	{
 		stackSize += 4;
 		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize*3);
 	}
 
-	assert(ftell(file) == streamPos + stack[stackPos].begin);
+	auto restore = ftell(file);
+	fseek(file, 0, SEEK_END);
 
 	stackPos++;
-	stack[stackPos].begin	= offset;
+	stack[stackPos].begin	=  ftell(file);
 	stack[stackPos].end		= ~0;
-	stack[stackPos].restore = streamPos + stack[stackPos-1].begin;
+	stack[stackPos].restore = restore;
 	stack[stackPos].byteLength = byteLength;
-
-	fseek(file, offset, SEEK_SET);
-	streamPos = offset;
 }
 
 void zCFile::PopSubFile()
@@ -189,9 +161,7 @@ void zCFile::PopSubFile()
 	{
 		fseek(file, stack[stackPos].restore, SEEK_SET);
 		--stackPos;
-		streamPos = streamPos - stack[stackPos].begin;
 
-		assert(ftell(file) == streamPos + stack[stackPos].begin);
 	}
 }
 

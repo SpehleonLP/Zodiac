@@ -21,7 +21,7 @@ struct zCFunction
 	uint module;
 	uint objectType;
 	uint declaration;
-	uint nameSpace;
+//	uint nameSpace;
 };
 
 struct zCModule
@@ -39,8 +39,8 @@ struct zCGlobalInfo
 {
 	uint name;
 	uint nameSpace;
-	uint typeId;
 	uint address;
+	uint typeId; // doesn't do anything but maybe good to have for debugging
 };
 
 struct zCTypeInfo
