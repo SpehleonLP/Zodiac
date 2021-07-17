@@ -11,6 +11,11 @@ namespace Zodiac
 
 int zIZodiac::typeIdCounter{1};
 
+zIZodiac * zCreateZodiac(asIScriptEngine * engine)
+{
+	return new zCZodiac(engine);
+}
+
 zCZodiac::zCZodiac(asIScriptEngine * engine) :
 	m_engine(engine)
 {
@@ -92,6 +97,9 @@ void    zCZodiac::LoadFromFile(zIFileDescriptor * file)
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace)
 {
+	if(name == nullptr) name = "";
+	if(nameSpace == nullptr) nameSpace = "";
+
 	for(auto & c : m_typeList)
 	{
 		if(c.name == name && c.nameSpace == nameSpace)
@@ -99,7 +107,7 @@ int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const
 	}
 
 	TypeEntry entry;
-	entry.asTypeId = 0;
+	entry.asTypeId = -1;
 	entry.zTypeId  = zTypeId;
 	entry.byteLength = byteLength;
 	entry.name   = name;
@@ -161,7 +169,7 @@ void zCZodiac::SortTypeList()
 {
 	for(auto & entry : m_typeList)
 	{
-		entry.asTypeId = ~0;
+		entry.asTypeId = -1;
 	}
 
 	auto N = m_engine->GetObjectTypeCount();
@@ -186,27 +194,28 @@ void zCZodiac::SortTypeList()
 		needSort = true;
 		bool found = false;
 
-		for(uint32_t j = 0; i < m_typeList.size(); ++i)
+		for(uint32_t j = 0; j < m_typeList.size(); ++j)
 		{
 			if(strcmp(m_typeList[j].name,	   typeId->GetName())      == 0
 			&& strcmp(m_typeList[j].nameSpace, typeId->GetNamespace()) == 0)
 			{
 				m_typeList[j].asTypeId = typeId->GetTypeId();
-				m_typeList[i].byteLength = typeId->GetSize();
+				m_typeList[j].byteLength = typeId->GetSize();
 				found = true;
 				break;
 			}
 		}
 
-		if(!found && !(typeId->GetFlags() & asOBJ_POD))
+		if(!found)
 		{
-			if(typeId->GetNamespace())
-				throw std::runtime_error(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName());
-			else
-				throw std::runtime_error(std::string("Missing entry for loading/saving ") + typeId->GetName());
-		}
-		else
-		{
+			if(0 == (typeId->GetFlags() & asOBJ_POD))
+			{
+				if(typeId->GetNamespace())
+					throw std::runtime_error(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName());
+				else
+					throw std::runtime_error(std::string("Missing entry for loading/saving ") + typeId->GetName());
+			}
+
 			TypeEntry entry;
 			entry.asTypeId = typeId->GetTypeId();
 			entry.byteLength = typeId->GetSize();
@@ -224,17 +233,6 @@ void zCZodiac::SortTypeList()
 		std::sort(m_typeList.begin(), m_typeList.end());
 	}
 
-#ifndef NDEBUG
-	assert(m_typeList.size() == N);
-
-	for(uint32_t i = 0; i < m_typeList.size(); ++i)
-	{
-		uint32_t index = m_typeList[i].asTypeId & asTYPEID_MASK_SEQNBR;
-
-		assert(index < N);
-		assert(m_typeList[i].asTypeId == m_engine->GetObjectTypeByIndex(index)->GetTypeId());
-	}
-#endif
 }
 
 

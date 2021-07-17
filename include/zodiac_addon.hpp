@@ -7,6 +7,7 @@
 #include "zodiac.h"
 #endif
 
+#if 0
 #include "add_on/scriptstdstring/scriptstdstring.h"
 #include "add_on/contextmgr/contextmgr.h"
 #include "add_on/scriptfile/scriptfile.h"
@@ -16,6 +17,7 @@
 #include "add_on/scriptgrid/scriptgrid.h"
 #include "add_on/scripthandle/scripthandle.h"
 #include "add_on/weakref/weakref.h"
+#endif
 
 #include <string>
 #include <cassert>
@@ -23,7 +25,7 @@
 namespace Zodiac
 {
 #ifdef CONTEXTMGR_H
-	void ZodiacSave(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int*)
+	void ZodiacSave(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int&)
 	{
 		uint32_t time{};
 		if(mgr->m_getTimeFunc)
@@ -60,7 +62,7 @@ namespace Zodiac
 		}
 	}
 
-	void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int*)
+	void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&)
 	{
 		uint32_t time{};
 		if(mgr->m_getTimeFunc)
@@ -108,12 +110,12 @@ namespace Zodiac
 #endif
 
 #ifdef SCRIPTFILE_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter *, CScriptFile const*, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter *, CScriptFile const*, int&)
 	{
 		throw Exception::zZE_ObjectUnserializable;
 	}
 
-	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int*)
+	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&)
 	{
 		assert(file != nullptr);
 		assert(*file == nullptr);
@@ -125,12 +127,12 @@ namespace Zodiac
 
 /* POD doesn't need defined...
 #ifdef SCRIPTDATETIME_H
-	void ZodiacSave(zIZodiacWriter *, CDateTime*, int*);
-	void ZodiacLoad(zIZodiacReader *, CDateTime*, int*);
+	void ZodiacSave(zIZodiacWriter *, CDateTime*, int&);
+	void ZodiacLoad(zIZodiacReader *, CDateTime*, int&);
 #endif*/
 
 #ifdef SCRIPTANY_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptAny const* any, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptAny const* any, int&)
 	{
 		assert(any != nullptr);
 
@@ -144,7 +146,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&value);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int&)
 	{
 		assert(any != nullptr);
 		assert(*any == nullptr);
@@ -169,7 +171,7 @@ namespace Zodiac
 #endif
 
 #ifdef SCRIPTARRAY_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptArray const* array, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptArray const* array, int&)
 	{
 		assert(array != nullptr);
 
@@ -187,7 +189,7 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptArray** array, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptArray** array, int&)
 	{
 		assert(array != nullptr);
 		assert(*array == nullptr);
@@ -215,7 +217,7 @@ namespace Zodiac
 #endif
 
 #if defined(SCRIPTSTDSTRING_H) || defined(SCRIPTDICTIONARY_H)
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, std::string const* string, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, std::string const* string, int&)
 	{
 		assert(string != nullptr);
 
@@ -223,7 +225,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&string_id);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, std::string* string, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, std::string* string, int&)
 	{
 		int string_id;
 		reader->GetFile()->Read(&string_id);
@@ -233,7 +235,7 @@ namespace Zodiac
 
 #ifdef SCRIPTDICTIONARY_H
 //are these safe?? type punning is undefined behavior...
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictValue const* dict, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictValue const* dict, int&)
 	{
 		assert(dict != nullptr);
 
@@ -249,7 +251,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&value);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictValue* dict, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictValue* dict, int&)
 	{
 		assert(dict != nullptr);
 
@@ -271,7 +273,7 @@ namespace Zodiac
 		dict->m_typeId 	 = value;
 	}
 
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictionary const* dict, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictionary const* dict, int&)
 	{
 		assert(dict != nullptr);
 
@@ -282,12 +284,13 @@ namespace Zodiac
 
 		for(auto & itr : *dict)
 		{
-			ZodiacSave(writer, &itr.m_it->first, nullptr);
-			ZodiacSave(writer, &itr.m_it->second, nullptr);
+			int real_type;
+			ZodiacSave(writer, &itr.m_it->first, real_type);
+			ZodiacSave(writer, &itr.m_it->second, real_type);
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int&)
 	{
 		assert(dict != nullptr);
 		assert(*dict == nullptr);
@@ -304,8 +307,9 @@ namespace Zodiac
 			std::string key;
 			CScriptDictValue value;
 
-			ZodiacLoad(reader, &key, nullptr);
-			ZodiacLoad(reader, &value, nullptr);
+			int real_type;
+			ZodiacLoad(reader, &key, real_type);
+			ZodiacLoad(reader, &value, real_type);
 
 			(*dict)->Insert(std::move(key), std::move(value));
 		}
@@ -314,7 +318,7 @@ namespace Zodiac
 #endif
 
 #ifdef SCRIPTGRID_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptGrid const* grid, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptGrid const* grid, int&)
 	{
 		assert(grid != nullptr);
 
@@ -338,7 +342,7 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int&)
 	{
 		assert(grid != nullptr);
 		assert(*grid == nullptr);
@@ -371,7 +375,7 @@ namespace Zodiac
 
 
 #ifdef SCRIPTHANDLE_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptHandle const* handle, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptHandle const* handle, int&)
 	{
 		assert(handle != nullptr);
 
@@ -387,7 +391,7 @@ namespace Zodiac
 		file->Write(&objectId);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptHandle* handle, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptHandle* handle, int&)
 	{
 		assert(handle != nullptr);
 
@@ -416,7 +420,7 @@ namespace Zodiac
 #endif
 
 #ifdef SCRIPTWEAKREF_H
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptWeakRef const* handle, int*)
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptWeakRef const* handle, int&)
 	{
 		assert(handle != nullptr);
 
@@ -438,7 +442,7 @@ namespace Zodiac
 		file->Write(&objectId);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptWeakRef* handle, int*)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptWeakRef* handle, int&)
 	{
 		assert(handle != nullptr);
 		assert(*handle == nullptr);
@@ -466,37 +470,38 @@ namespace Zodiac
 		(void)zodiac;
 
 #ifdef SCRIPTANY_H
-		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptAny>("any");
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptAny, "any", nullptr);
 #endif
 
 #ifdef SCRIPTARRAY_H
-		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptArray>("array<T>");
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptArray, "array", nullptr);
 #endif
 
 #ifdef SCRIPTDICTIONARY_H
-		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptDictionary>("dictionary");
-		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptDictValue>("dictionaryValue");
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptDictionary, "dictionary", nullptr);
+		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptDictValue, "dictionaryValue", nullptr);
 #endif
 
 #ifdef SCRIPTFILE_H
-		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptFile>("file");
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptFile, "file", nullptr);
 #endif
 
 #ifdef SCRIPTGRID_H
-		zodiac->RegisterRefType<AS_NAMESPACE_QUALIFIER CScriptGrid>("grid");
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptGrid, "grid", nullptr);
 #endif
 
 #ifdef SCRIPTSTDSTRING_H
-		zodiac->RegisterValueType<std::string>("string");
+		zRegisterValueType(zodiac, std::string, "string", nullptr);
 #endif
 
 #ifdef SCRIPTHANDLE_H
-		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptHandle>("ref");
+		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptHandle, "ref", nullptr);
 #endif
 
 #ifdef SCRIPTWEAKREF_H
-		zodiac->RegisterValueType<AS_NAMESPACE_QUALIFIER CScriptWeakRef>("weakref");
+		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptWeakRef, "weakref", nullptr);
 #endif
+
 	}
 
 }

@@ -38,7 +38,7 @@ struct TypeEntry;
 	void SetUserData(void * d) override { m_userData = d; };
 	void * GetUserData() const override { return m_userData; };
 
-	int   RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) override;
+	int   RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = "") override;
 
 	int   GetAsTypeIdFromZTypeId(int zTypeId) const override;
 	int   GetZTypeIdFromAsTypeId(int asTypeId) const override;
@@ -62,10 +62,10 @@ private:
 	zFUNCTION_t m_postRestoreCallback{};
 	zFUNCTION_t m_postSavingCallback{};
 
-	void * 	m_userData;
-	std::atomic<int>	m_progress;
-	std::atomic<int>	m_totalSteps;
-	std::atomic<bool>   m_inProgress;
+	void * 	m_userData{};
+	std::atomic<int>	m_progress{};
+	std::atomic<int>	m_totalSteps{};
+	std::atomic<bool>   m_inProgress{};
 
 	std::vector<TypeEntry> m_typeList;
 

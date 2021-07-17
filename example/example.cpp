@@ -20,9 +20,11 @@
 #include "add_on/scriptstdstring/scriptstdstring.h"
 #include "add_on/scriptarray/scriptarray.h"
 #include "add_on/scriptdictionary/scriptdictionary.h"
+#include "add_on/datetime/datetime.h"
 
 #include "zodiac.h"
 #include <memory>
+#include <vector>
 
 //must be included after add_on-s
 #include "zodiac_addon.hpp"
@@ -39,14 +41,21 @@ void PrintString(std::string &str)
 	std::cout << str << std::endl;
 }
 
+void PrintInt(int64_t str)
+{
+	std::cout << str << std::endl;
+}
+
+void PrintDouble(double str)
+{
+	std::cout << str << std::endl;
+}
+
 void Suspend()
 {
 	auto ctx = asGetActiveContext();
 	ctx->Suspend();
 }
-
-
-#define TEXT(x) #x
 
 void MessageCallback(const asSMessageInfo *msg, void *)
 {
@@ -58,16 +67,6 @@ void MessageCallback(const asSMessageInfo *msg, void *)
 
 	printf("%s (%d, %d) : %s : %s\n", msg->section, msg->row, msg->col, type, msg->message);
 }
-
-const char Script[] = TEXT(
-
-	void main()
-	{
-		string text = "some text";
-		Supsend();
-		Print(text);
-	}
-);
 
 asIScriptContext *ctx;
 
@@ -90,11 +89,25 @@ void ReadSaveDataFunc(Zodiac::zIZodiacReader * reader, void* ptr)
 	auto file = reader->GetFile();
 	file->Read((SaveData*)ptr);
 
-	ctx = reader->LoadContext(((SaveData*)ptr)->Context, /* AddRef it when loaded */ true);
+	ctx = reader->LoadContext(((SaveData*)ptr)->Context);
 }
 
+std::string ReadFile(const char * path)
+{
+	FILE * fp = fopen(path, "r");
 
-int main(int argc, char **argv)
+	fseek(fp, 0, SEEK_END);
+	std::string file;
+	file.resize(ftell(fp));
+	fseek(fp, 0, SEEK_SET);
+
+	fread(&file[0], file.size(), 1, fp);
+	fclose(fp);
+
+	return file;
+}
+
+int Run()
 {
 	// Perform memory leak validation in debug mode
 	#if defined(_MSC_VER)
@@ -121,6 +134,8 @@ int main(int argc, char **argv)
 	RegisterScriptDictionary(engine);
 
 	r = engine->RegisterGlobalFunction("void Print(string &in)", asFUNCTION(PrintString), asCALL_CDECL); assert( r >= 0 );
+	r = engine->RegisterGlobalFunction("void Print(int64)", asFUNCTION(PrintInt), asCALL_CDECL); assert( r >= 0 );
+	r = engine->RegisterGlobalFunction("void Print(double)", asFUNCTION(PrintDouble), asCALL_CDECL); assert( r >= 0 );
 	r = engine->RegisterGlobalFunction("void Suspend()", asFUNCTION(Suspend), asCALL_CDECL); assert( r >= 0 );
 
 //-------------------
@@ -133,53 +148,68 @@ int main(int argc, char **argv)
 	zodiac->SetUserData(&data);
 	zodiac->SetReadSaveDataCallback(ReadSaveDataFunc);
 	zodiac->SetWriteSaveDataCallback(WriteSaveDataFunc);
-	
+
 	zodiac->SetProperty(Zodiac::zZP_SAVE_BYTECODE, true);
-//register add_on directory stuffs	
+//register add_on directory stuffs
 	Zodiac::ZodiacRegisterAddons(zodiac.get());
 
 
 // try to restore
-	FILE * fp = fopen("save_file.z", "r");
+	FILE * fp = nullptr; //fopen("save_file.z", "rb");
 
 	if(fp != nullptr)
 	{
 	//use pointer to fp to signify taking ownership and closing when the class is deleted
 		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
 		zodiac->LoadFromFile(file.get());
+	}
 	else
 	{
 // restore failed create context
+		auto script = ReadFile("main.as");
+
 		asIScriptModule *mod = engine->GetModule("script", asGM_ALWAYS_CREATE);
-		r = mod->AddScriptSection("script", Script, strlen(Script));
+		r = mod->AddScriptSection("script", script.data(), script.size());
 		r = mod->Build();
 
 		asIScriptFunction *func = mod->GetFunctionByDecl("void main()");
 
-		asIScriptContext *ctx = mod->GetEngine()->RequestContext();
+		ctx = mod->GetEngine()->RequestContext();
 		ctx->Prepare(func);
 	}
 
-	ctx->Execute();
+	if(ctx) ctx->Execute();
 
 // finished delete save
-	if(ctx->GetState() != asEXECUTION_SUSPENDED)
+	if(!ctx || ctx->GetState() != asEXECUTION_SUSPENDED)
 	{
-		remove("save_file.z");	
+		remove("save_file.z");
 	}
 // suspended create save
 	else
 	{
-		FILE * fp = fopen("save_file.z", "w");
+		FILE * fp = fopen("save_file.z", "wb");
 
 //use pointer to fp to signify taking ownership and closing when the class is deleted
 		std::unique_ptr<Zodiac::zIFileDescriptor> file(Zodiac::FromCFile(&fp));
 		zodiac->SaveToFile(file.get());
 	}
 
+	engine->ReturnContext(ctx);
 	// Shut down the engine
 	engine->ShutDownAndRelease();
 
 	return 0;
 }
 
+int main(int , char **)
+{
+	try
+	{
+		Run();
+	}
+	catch(std::exception & e)
+	{
+		std::cerr << e.what() << std::endl;
+	}
+}

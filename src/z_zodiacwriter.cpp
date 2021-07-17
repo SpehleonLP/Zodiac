@@ -9,9 +9,6 @@
 namespace Zodiac
 {
 
-void ZodiacSave(zIZodiacWriter *, asIScriptContext *, int *);
-void ZodiacSave(zIZodiacWriter *, asIScriptObject *, int *);
-
 zCZodiacWriter::zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps) :
 	m_parent(parent),
 	m_file(file),

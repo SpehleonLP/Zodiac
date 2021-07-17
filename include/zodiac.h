@@ -72,9 +72,10 @@ typedef void (*zSAVE_FUNC_t)(zIZodiacWriter *, void const*, int &);
 typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int &);
 
 
-#define ZODIAC_GETSAVEFUNC(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacWriter *, T*, int &)>(ZodiacSave))
+#define ZODIAC_GETSAVEFUNC(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacWriter *, T const*, int &)>(ZodiacSave))
 #define ZODIAC_GETLOADFUNC_R(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T**, int &)>(ZodiacLoad))
 #define ZODIAC_GETLOADFUNC_V(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T*, int &)>(ZodiacLoad))
+
 
 class zIZodiac
 {
@@ -110,7 +111,10 @@ public:
 	virtual int   GetAsTypeIdFromZTypeId(int asTypeId) const = 0;
 	virtual int   GetZTypeIdFromAsTypeId(int asTypeId) const = 0;
 
-//does not copy string, assumes read only memory
+	//does not copy string, assumes read only memory
+	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
+
+/* why this not work but same idea does for nnholmon::json???
 	template<typename T>
 	inline int   RegisterRefType(const char * name, const char * nameSpace = nullptr)
 	{ return RegisterTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace); }
@@ -118,7 +122,7 @@ public:
 	template<typename T>
 	inline int   RegisterValueType(const char * name, const char * nameSpace = nullptr)
 	{ return RegisterTypeCallback(GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace); }
-
+*/
 //the typeid builtin doesn't always necessarily get the same reference depending on implementation,
 //multiple can be created which isn't great for comparison.  Not fun!
 //so make a unique int for every time this template exists
@@ -130,12 +134,14 @@ public:
 		return _typeId;
 	}
 
-protected:
-	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
-
 private:
 	static int typeIdCounter;
 };
+
+#define zRegisterRefType(zodiac, T, name, nameSpace)	zodiac->RegisterTypeCallback(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace)
+#define zRegisterValueType(zodiac, T, name, nameSpace)	zodiac->RegisterTypeCallback(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace)
+
+
 
 template<> inline int zIZodiac::GetTypeId<std::nullptr_t>() { return 0; }
 

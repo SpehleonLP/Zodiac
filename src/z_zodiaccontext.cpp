@@ -1,6 +1,9 @@
 #include "z_zodiaccontext.h"
-#include "as_context.h"
 
+void Zodiac::ZodiacSave(zIZodiacWriter*, asIScriptContext const*, int&) {}
+void Zodiac::ZodiacLoad(zIZodiacReader*, asIScriptContext*, int&) {}
+
+/*
 struct StackFrame
 {
 //manually pad to 40 bytes just in case.
@@ -102,3 +105,5 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext* ctx, int&)
 }
 
 void Zodiac::ZodiacLoad(zIZodiacReader*, asIScriptContext*, int&) {}
+
+*/
