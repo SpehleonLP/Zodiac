@@ -41,11 +41,12 @@ public:
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
 	void LoadScriptObject(void *, uint asTypeId) override;
 
-	const char * LoadString(int id) const override { return  (uint32_t)id < stringAddressCount()? &m_stringTable[m_stringAddresses[id]] : nullptr;  }
-	asITypeInfo * LoadTypeInfo(int id, bool RefCount) override;
+	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringAddressCount()? &m_stringTable[m_stringAddresses[id]] : nullptr;  }
+	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
+	int					LoadTypeId(int id) override;
 	asIScriptFunction * LoadFunction(int id) override;
-	asIScriptContext * LoadContext(int id) override;
-	void * LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
+	asIScriptContext *  LoadContext(int id) override;
+	void *				LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
 
 	const char * Verify() const;
 

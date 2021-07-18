@@ -725,6 +725,17 @@ asITypeInfo * zCZodiacReader::LoadTypeInfo(int id, bool RefCount)
 	return typeInfo;
 }
 
+int zCZodiacReader::LoadTypeId(int id)
+{
+	if(id < 0) return asTYPEID_VOID;
+
+	if((uint)id > typeInfoLength())
+		throw Exception::zZE_BadObjectAddress;
+
+	return m_asTypeIdFromStored[id];
+}
+
+
 asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 {
 	if(id < 0) return nullptr;

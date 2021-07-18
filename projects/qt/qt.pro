@@ -2,7 +2,7 @@ TEMPLATE = app
 CONFIG += c++14
 CONFIG -= app_bundle qt
 
-DEFINES += HAVE_ZODIAC
+DEFINES += HAVE_ZODIAC AS_USE_STLNAMES=1
 
 LIBS += -pthread
 
@@ -70,6 +70,7 @@ SOURCES += \
 	../../../svn/angelscript-code/sdk/angelscript/source/as_typeinfo.cpp \
 	../../../svn/angelscript-code/sdk/angelscript/source/as_variablescope.cpp \
 	../../example/example.cpp \
+	../../example/print_func.cpp \
 	../../src/z_cfile.cpp \
 	../../src/z_memorymap.cpp \
 	../../src/z_zodiac.cpp \
@@ -137,6 +138,7 @@ HEADERS += \
 	../../../svn/angelscript-code/sdk/angelscript/source/as_tokenizer.h \
 	../../../svn/angelscript-code/sdk/angelscript/source/as_typeinfo.h \
 	../../../svn/angelscript-code/sdk/angelscript/source/as_variablescope.h \
+	../../example/print_func.h \
 	../../include/zodiac.h \
 	../../include/zodiac_addon.hpp \
 	../../src/z_cfile.h \

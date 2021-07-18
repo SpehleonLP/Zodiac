@@ -21,7 +21,7 @@
 #include "add_on/scriptarray/scriptarray.h"
 #include "add_on/scriptdictionary/scriptdictionary.h"
 #include "add_on/datetime/datetime.h"
-
+#include "print_func.h"
 #include "zodiac.h"
 #include <memory>
 #include <vector>
@@ -35,21 +35,6 @@ typedef unsigned int DWORD;
 // Function prototypes
 void ConfigureEngine(asIScriptEngine *engine);
 int  CompileScript(asIScriptEngine *engine);
-
-void PrintString(std::string &str)
-{
-	std::cout << str << std::endl;
-}
-
-void PrintInt(int64_t str)
-{
-	std::cout << str << std::endl;
-}
-
-void PrintDouble(double str)
-{
-	std::cout << str << std::endl;
-}
 
 void Suspend()
 {
@@ -133,9 +118,7 @@ int Run()
 	RegisterScriptArray(engine, false);
 	RegisterScriptDictionary(engine);
 
-	r = engine->RegisterGlobalFunction("void Print(string &in)", asFUNCTION(PrintString), asCALL_CDECL); assert( r >= 0 );
-	r = engine->RegisterGlobalFunction("void Print(int64)", asFUNCTION(PrintInt), asCALL_CDECL); assert( r >= 0 );
-	r = engine->RegisterGlobalFunction("void Print(double)", asFUNCTION(PrintDouble), asCALL_CDECL); assert( r >= 0 );
+	Print::asRegister(engine);
 	r = engine->RegisterGlobalFunction("void Suspend()", asFUNCTION(Suspend), asCALL_CDECL); assert( r >= 0 );
 
 //-------------------

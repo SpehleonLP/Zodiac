@@ -9,6 +9,7 @@
 #endif
 
 #include <cstdio>
+#include <memory>
 
 
 namespace Zodiac
@@ -208,13 +209,19 @@ public:
 	template<typename U, typename... Args>
 	U * LoadObject(uint id);
 
+	virtual std::unique_ptr<void> LoadScriptObject(int address, uint asTypeId) = 0;
+	inline  std::unique_ptr<void> LoadScriptObject(int address, asITypeInfo * typeInfo) { return LoadScriptObject(address, typeInfo? typeInfo->GetTypeId() : 0); }
+
 	virtual void LoadScriptObject(void *, int address, uint asTypeId) = 0;
+	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0); }
 
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
 	virtual void LoadScriptObject(void *, uint asTypeId) = 0;
+	inline  void LoadScriptObject(void * object, asITypeInfo * typeInfo) { LoadScriptObject(object, typeInfo? typeInfo->GetTypeId() : 0); }
 
-	virtual const char * LoadString(int id) const = 0;
+	virtual const char  * LoadString(int id) const = 0;
 	virtual asITypeInfo * LoadTypeInfo(int id, bool RefCount) = 0;
+	virtual int           LoadTypeId(int id) = 0;
 //always refcounts
 	virtual asIScriptFunction * LoadFunction(int id) = 0;
 //always refcounts
@@ -246,6 +253,7 @@ public:
 	virtual int SaveContext(asIScriptContext const* id) = 0;
 	inline  int SaveScriptObject(asIScriptObject const* t, void const* ownr = nullptr)  { return SaveScriptObject( t, t? t->GetTypeId() : 0, ownr); }
 	virtual int SaveScriptObject(void const* t, uint asTypeId, void const* ownr = nullptr) = 0;
+	inline  int SaveScriptObject(void const* t, asITypeInfo const* asTypeId, void const* ownr = nullptr) {  return SaveScriptObject( t, asTypeId? asTypeId->GetTypeId() : 0, ownr);  }
 
 // ownr indicates the object that owns (allocated memory for) the object being written.
 // if the typeId isn't a handle type it is ignored.
