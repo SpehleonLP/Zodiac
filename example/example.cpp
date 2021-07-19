@@ -20,6 +20,7 @@
 #include "add_on/scriptstdstring/scriptstdstring.h"
 #include "add_on/scriptarray/scriptarray.h"
 #include "add_on/scriptdictionary/scriptdictionary.h"
+#include "add_on/contextmgr/contextmgr.h"
 #include "add_on/datetime/datetime.h"
 #include "print_func.h"
 #include "zodiac.h"

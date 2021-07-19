@@ -2,21 +2,47 @@
 //test loading primitives and POD
 class Train
 {
+
+	Train(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
+	{
+		name = _name;
+		passengers = _passengers;
+		year = _year;
+		speed = _speed;
+		purchased = _purchased;
+		energyEfficiency = efficiency;
+	}
+	
+
 	string   model;
 	int    	 passengers;
 	int      year;
-	float  	 carryingCapacity;
 	float	 speed;
 	datetime purchased;
+
+	virtual void OnStartRoute() {}
+	virtual void OnEndRoute() {}
+	virtual bool TravelDistance(float length) { return false; }
 	
-	virtual void OnStartRoute();
-	virtual void OnEndRoute();
-	virtual bool TravelDistance(float length);
+	virtual void Print()
+	{
+		Println("\t \"model\" : \"", model , "\"");
+		Println("\t \"passengers\" : ", passengers);
+		Println("\t \"year\" : ", year);
+		Println("\t \"speed\" : ", speed);
+		Println("\t \"purchased\" : " , purchased.year());
+	}	
 };
 
 //test loading sub classes
 class ElectricTrain : public Train
 {
+	ElectricTrain(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
+	{
+		Train(_name, _passengers, _year, _speed, _purchased);
+		energyEfficiency = efficiency;
+	}
+	
 	float  charge;
 	float  energyEfficiency;
 	
@@ -30,10 +56,27 @@ class ElectricTrain : public Train
 		charge -= (1.0 - energyEfficiency) * speed * time;
 		return charge > 0;
 	}
+	
+	void Print()
+	{
+		Println("{");
+		Train::Print();
+		Println("\t \"charge\" : " , charge);
+		Println("\t \"efficiency\" : " , energyEfficiency);
+		Println("}");
+	}
 };
 
 class DeiselTrain : public Train
 {
+	ElectricTrain(string _name, int _passengers, int _year, float _speed, datetime _purchased, float efficiency)
+	{
+		Train(_name, _passengers, _year, _speed, _purchased);
+		engineEfficiency = efficiency;
+		testString = "testString";
+	}
+	
+	string testString;
 	float  engineEfficiency;
 	float  fuel;
 	
@@ -47,12 +90,23 @@ class DeiselTrain : public Train
 		fuel -= (1.0 - engineEfficiency) * speed * time;
 		return fuel > 0;
 	}
+	
+	void Print()
+	{
+		Println("{");
+		Train::Print();
+		Println("\t \"charge\" : " , fuel);
+		Println("\t \"efficiency\" : " , engineEfficiency);
+		Println("}");
+	}
 };
 
 //test arrays/lists
+dictionary allStations;
+
 class Station
 {
-	Station(string _name, dictionary@ _tracks)
+	Station(string &in _name, dictionary@ _tracks)
 	{
 		name   @= _name;
 		tracks @= _tracks;
@@ -60,17 +114,9 @@ class Station
 		if(allStations.exists(name))
 			Println("duplicate station exists: ", name);
 			
-		allStations[name] = weakRef<Station>(this);
+		allStations[name] = this;
 	}
 	
-	~Station()
-	{
-		if(!allStations.exists(name))
-			Println("station already deleted: ", name);
-	
-		allStations.delete(name);
-	}
-
 	//test loading handles
 	string 	   name;
 	dictionary tracks;
@@ -97,7 +143,6 @@ class Station
 	}
 };
 
-dictionary@ allStations;
 
 
 class HomeOffice : Station
@@ -108,8 +153,10 @@ class HomeOffice : Station
 		Node@  next;
 	};
 	
+	HomeOffice(string &in _name, dictionary@ _tracks) { Station(_name, _tracks); }
+		
 	Node@ 		 list;
-	Station@[][] routes;
+	weakref<Station>[][] routes;
 	Route[]		 schedule;
 	
 	void PushTrain(Train@ train)
@@ -234,9 +281,10 @@ class RingListBuffer
 }
 
 
-HomeOffice office;
+HomeOffice@ office;
 Train@     antiqueTrain;
 int		   test_primitive_loading = 23;
+RingListBuffer buffer({ "apple", "orange", "banana", "nectarine", "plum", "apricot" });
 
 class Route
 {
@@ -259,10 +307,48 @@ void RunSchedule()
 	}
 }
 
-void main()
+void SetUp()
+{(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
+	antiqueTrain = Train("Smethwick", 7, 1779, 15, datetime(1779, 5, 0), .15);
+	
+	office = HomeOffice("london", { 
+		{"cambridge",  5}, {"harwich",  7}, {"dover",  7}, {"brighton",  5}, {"nottingham",  13},  
+		{"portsmouth",  5}, {"exter",  10},  {"cardiff",  10},  {"birmingham",  6},
+		{"crewe",  14}, {"leeds",  14},  {"york",  14},
+	});
+		
+	Station("cambridge", { {"london",  5} });
+	Station("harwich", { {"london",  8} });
+	Station("dover", { {"london",  7} });
+	Station("brighton", { {"london",  5} });
+	Station("nottingham", { {"london",  13} });
+	
+	Station("portsmouth", { {"london",  5}, {"exter", 8}, {"cardiff", 10}, {"birmingham", 13}});
+	Station("exter", { {"london",  10}, {"cardiff", 8}, {"portsmouth", 10}, {"birmingham", 12}});
+	Station("cardiff", { {"london",  10}, {"exter", 8}, {"portsmouth", 10}, {"birmingham", 12}});
+	Station("birmingham", { {"london",  6}, {"exter", 8}, {"portsmouth", 10}, {"cardif", 12}});
+	
+	Station("crewe", { {"london",  14}, {"liverpool", 2}});
+	Station("leeds", { {"london",  14}, {"manchester", 2}, {"york", 1}});
+	Station("york", { {"london",  14}, {"leeds", 1}, {"newcastle", 3}});
+	
+	Station("liverpool", { {"crewe",  2}, {"manchester", 2}, {"newcastle", 10}, {"edinburgh", 14}, {"glasgow", 13}});	
+	Station("newcastle", { {"york",  3}, {"edinburgh", 4}, {"glasgow", 6}, {"liverpool", 9}, {"manchester", 9} });
+	Station("edinburgh", { {"aberdeen",  6}, {"iverness", 10},  {"newcastle", 4}, {"glasgow", 5}, {"liverpool", 13}, {"manchester", 13} });
+	Station("glasgow", { {"fort william",  6}, {"edinburgh", 4}, {"newcastle", 6}, {"liverpool", 12}, {"manchester", 12} });
+	
+	Station("aberdeen", { {"edinburgh",  9}, {"iverness", 14}, {"glasgow", 12}});	
+	Station("iverness", { {"edinburgh",  9}, {"aberdeen", 14}, {"glasgow", 12}});	
+	Station("fort william", {"glasgow", 6}});
+	
+
+
+}
+
+void Destroy()
 {
-
-
+	@buffer = null;
+	allStations.clear();
 
 
 }
