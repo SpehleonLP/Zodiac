@@ -66,33 +66,44 @@ void    zCZodiac::SaveToFile(zIFileDescriptor * file)
 	}
 }
 
-void    zCZodiac::LoadFromFile(zIFileDescriptor * file)
+bool zCZodiac::LoadFromFile(zIFileDescriptor * file)
 {
 	if(m_inProgress.exchange(true))
 	{
 		throw std::runtime_error("Loading while in progress");
-		return;
+		return false;
 	}
 
 	ClearBoolOnDestruct clearer(m_inProgress);
+	std::unique_ptr<zCZodiacReader> reader;
 
-	SortTypeList();
-
-	zCZodiacReader reader(this, file, m_progress, m_totalSteps);
+	try
+	{
+		SortTypeList();
+		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps));
+	}
+	catch(Exception & e)
+	{
+		error_string = std::move(e.text);
+		error_code   = e.code;
+		return false;
+	}
 
 	if(m_preRestoreCallback)
 	{
 		(m_preRestoreCallback)(m_userData);
 	}
 
-	reader.LoadModules(m_engine);
-	reader.ReadSaveData(m_saveDataReadCallback, m_userData);
-	reader.RestoreGlobalVariables(m_engine);
+	reader->LoadModules(m_engine);
+	reader->ReadSaveData(m_saveDataReadCallback, m_userData);
+	reader->RestoreGlobalVariables(m_engine);
 
 	if(m_postRestoreCallback)
 	{
 		(m_postRestoreCallback)(m_userData);
 	}
+
+	return true;
 }
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace)

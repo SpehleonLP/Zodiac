@@ -31,8 +31,9 @@ zCFile::zCFile(FILE* file, bool ownsFile) :
 	stackPos = 0;
 	stack = (StackFrame*)malloc(sizeof(StackFrame)*stackSize);
 	stack[0].begin = 0;
-	stack[1].end = ~0u;
-	stack[2].restore = 0u;
+	stack[0].end = ~0u;
+	stack[0].restore = 0u;
+	stack[0].byteLength = nullptr;
 }
 
 zCFile::~zCFile()
@@ -64,7 +65,7 @@ int zCFile::Write(const void *ptr, uint size)
 	if(end > stack[stackPos].end)
 	{
 		errno = EIO;
-		size  = stack[stackPos].end - ftell(file);
+		size  = std::max<int64_t>((int64_t)stack[stackPos].end - ftell(file), 0);
 	}
 
 	int r = fwrite(ptr, 1, size, file);
@@ -78,31 +79,22 @@ void zCFile::seek(int offset, Flags flags)
 	{
 	case Flags::zFILE_BEGIN:
 		offset += stack[stackPos].begin;
-
-		if((uint32_t)offset < stack[stackPos].begin) offset = stack[stackPos].begin;
-		if((uint32_t)offset > stack[stackPos].end  ) offset = stack[stackPos].end;
-
-		fseek(file, offset, SEEK_SET);
 		break;
 	case Flags::zFILE_CUR:
 		offset += ftell(file);
-
-		if((uint32_t)offset < stack[stackPos].begin) offset = stack[stackPos].begin;
-		if((uint32_t)offset > stack[stackPos].end  ) offset = stack[stackPos].end;
-
-		fseek(file, offset, SEEK_CUR);
 		break;
 	case Flags::zFILE_END:
-		offset += stack[stackPos].end;
-
-		if((uint32_t)offset < stack[stackPos].begin) offset = stack[stackPos].begin;
-		if((uint32_t)offset > stack[stackPos].end  ) offset = stack[stackPos].end;
-
-		fseek(file, offset, SEEK_END);
-		break;
+	{
+		fseek(file, 0, SEEK_END);
+		size_t back = std::min<size_t>(stack[stackPos].end, ftell(file));
+		offset += back;
+	}	break;
 	default:
 		break;
 	}
+
+	offset = std::max(stack[stackPos].begin, std::min<uint32_t>(stack[stackPos].end, offset));
+	fseek(file, offset, SEEK_SET);
 }
 
 uint zCFile::tell() const
@@ -114,27 +106,33 @@ uint zCFile::SubFileOffset() const { return stack[stackPos].begin; }
 
 void zCFile::PushSubFile(uint offset, uint byteLength)
 {
-	offset = offset+stack[stackPos].begin;
+	auto restore = ftell(file);
+
+//read type set to end of file
+	if(stack[0].end == ~0u)
+	{
+		fseek(file, 0, SEEK_END);
+		stack[0].end = ftell(file);
+	}
+
 	byteLength = offset+byteLength;
 
 //need to check becuase of overflows
-	if(!(offset < byteLength
-	&& offset < stack[stackPos].begin
-	&& byteLength < stack[stackPos].end))
+	if(!(offset < byteLength && byteLength < stack[0].end))
 	{
-		throw std::logic_error("bad sub file address");
+		throw Exception(BadSubFileAddress);
 	}
 
 	if(stackPos+1 >= stackSize)
 	{
 		stackSize += 4;
-		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize*3);
+		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize);
 	}
 
 	stackPos++;
 	stack[stackPos].begin	= offset;
 	stack[stackPos].end		= byteLength;
-	stack[stackPos].restore = ftell(file);
+	stack[stackPos].restore = restore;
 	stack[stackPos].byteLength = nullptr;
 
 	fseek(file, offset, SEEK_SET);
@@ -145,7 +143,7 @@ void zCFile::PushSubFile(uint * byteLength)
 	if(stackPos+1 >= stackSize)
 	{
 		stackSize += 4;
-		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize*3);
+		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize);
 	}
 
 	auto restore = ftell(file);
@@ -162,9 +160,15 @@ void zCFile::PopSubFile()
 {
 	if(stackPos > 0)
 	{
+		if(stack[stackPos].byteLength != nullptr)
+		{
+			fseek(file, 0, SEEK_END);
+			*stack[stackPos].byteLength = ftell(file) - stack[stackPos].begin;
+		}
+
+
 		fseek(file, stack[stackPos].restore, SEEK_SET);
 		--stackPos;
-
 	}
 }
 

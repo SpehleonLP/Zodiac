@@ -19,7 +19,7 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_progress(progress),
 	m_totalSteps(total_steps)
 {
-	m_header = (zCHeader const*)(m_mmap.GetAddress() + (m_mmap.GetLength() - sizeof(m_header)));
+	m_header = (zCHeader const*)(m_mmap.GetAddress() + (m_mmap.GetLength() - sizeof(zCHeader)));
 
 	m_stringAddresses	= (uint32_t const*)(m_mmap.GetAddress() + m_header->stringAddressOffset);
 	m_stringTable		= (char const *)(m_mmap.GetAddress() + m_header->stringTableOffset);
@@ -33,34 +33,36 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 
 	m_progress   = 0;
 	m_totalSteps = addressTableLength();
+
+	Verify();
 }
 
-const char * zCZodiacReader::Verify() const
+void zCZodiacReader::Verify() const
 {
 	void * end = (void*)(m_mmap.GetAddress() + m_mmap.GetLength());
 
 	zCHeader check;
 
 	if(strncmp(check.magic, m_header->magic, sizeof(check.magic)) != 0)
-		return "Not a zodiac file.";
+		throw Exception("Not a zodiac file.", BadFileType);
 
 	if(m_header->saveDataByteOffset + saveDataByteLength() >  m_mmap.GetLength())
-		return "Buffer overrun: save data";
+		throw Exception("save data", BufferOverrun);
 
 //-----------------------
 //  CHECK STRINGS
 //----------------------
 	if(m_stringAddresses + stringAddressCount() > end)
-		return "Buffer overrun: string entry";
+		throw Exception("string entry", BufferOverrun);
 
 	if(m_stringTable + stringTableLength() > end)
-		return "Buffer overrun: string table";
+		throw Exception("string table", BufferOverrun);
 
 	for(uint32_t i = 0; i < stringAddressCount(); ++i)
 	{
 		if(m_stringAddresses[i] > stringTableLength())
 		{
-			return "Buffer overrun: string address";
+			throw Exception("string address", BufferOverrun);
 		}
 	}
 
@@ -68,13 +70,20 @@ const char * zCZodiacReader::Verify() const
 //  CHECK ENTRIES
 //----------------------
 	if(m_entries + addressTableLength() > end)
-		return "Buffer overrun: address table";
+		throw Exception("address table", BufferOverrun);
 
 	for(uint32_t i = 0; i < addressTableLength(); ++i)
 	{
-		if(m_header->savedObjectOffset > m_entries[i].offset || m_entries[i].offset + m_entries[i].byteLength > m_header->savedObjectLength)
+		if(m_header->savedObjectOffset > m_entries[i].offset)
 		{
-			return "Buffer overrun: entry save location";
+			throw Exception("entry save location", BufferOverrun);
+		}
+
+		uint32_t entry_end = (m_entries[i].offset + m_entries[i].byteLength) - m_header->savedObjectOffset;
+
+		if(entry_end > m_header->savedObjectLength)
+		{
+			throw Exception("entry save size", BufferOverrun);
 		}
 	}
 
@@ -82,28 +91,28 @@ const char * zCZodiacReader::Verify() const
 //  CHECK MODULES
 //----------------------
 	if(m_modules + moduleDataLength() > end)
-		return "Buffer overrun: module table";
+		throw Exception("module table", BufferOverrun);
 
 	for(uint32_t i = 0; i < moduleDataLength(); ++i)
 	{
 		if(m_modules[i].name > stringTableLength())
 		{
-			return "Buffer overrun: name in module";
+			throw Exception("name in module", BufferOverrun);
 		}
 
 		if(m_header->byteCodeOffset > m_modules[i].byteCodeOffset || m_modules[i].byteCodeOffset + m_modules[i].byteCodeLength > m_header->byteCodeOffset  + m_header->byteCodeByteLength)
 		{
-			return "Buffer overrun: byte code in module";
+			throw Exception("byte code in module", BufferOverrun);
 		}
 
 		if(m_modules[i].beginTypeInfo + m_modules[i].typeInfoLength > typeInfoLength())
 		{
-			return "Buffer overrun: asTypeInfo in module";
+			throw Exception("asTypeInfo in module", BufferOverrun);
 		}
 
 		if(m_modules[i].beginGlobalInfo + m_modules[i].globalsLength > globalsLength())
 		{
-			return  "Buffer overrun: global variables in module";
+			throw Exception("global variables in module", BufferOverrun);
 		}
 	}
 
@@ -111,33 +120,33 @@ const char * zCZodiacReader::Verify() const
 //  CHECK Functions
 //----------------------
 	if(m_functions + functionTableLength() > end)
-		return "Buffer overrun: function table";
+		throw Exception("function table", BufferOverrun);
 
 	for(uint32_t i = 0; i < functionTableLength(); ++i)
 	{
 		if(m_functions[i].delegateAddress > addressTableLength())
 		{
-			return "Buffer overrun: entry id in function";
+			throw Exception("entry id in function", BufferOverrun);
 		}
 
 		if(m_functions[i].delegateTypeId > typeInfoLength())
 		{
-			return "Buffer overrun: delegate id in function";
+			throw Exception("delegate id in function", BufferOverrun);
 		}
 
 		if(m_functions[i].module > stringTableLength())
 		{
-			return "Buffer overrun: module id in function";
+			throw Exception("module id in function", BufferOverrun);
 		}
 
 		if( m_functions[i].objectType > typeInfoLength())
 		{
-			return "Buffer overrun: typeId in function";
+			throw Exception("typeId in function", BufferOverrun);
 		}
 
 		if(m_functions[i].declaration > stringTableLength())
 		{
-			return "Buffer overrun: declaration in function";
+			throw Exception("declaration in function", BufferOverrun);
 		}
 
 	}
@@ -146,23 +155,23 @@ const char * zCZodiacReader::Verify() const
 //  CHECK Globals
 //----------------------
 	if(m_globals + globalsLength() > end)
-		return "Buffer overrun: global variables";
+		throw Exception("global variables", BufferOverrun);
 
 	for(uint32_t i = 0; i < globalsLength(); ++i)
 	{
 		if(m_globals[i].name > stringTableLength())
 		{
-			return "Buffer overrun: name in global";
+			throw Exception("name in global", BufferOverrun);
 		}
 
 		if(m_globals[i].nameSpace > stringTableLength())
 		{
-			return "Buffer overrun: namespace in global";
+			throw Exception("namespace in global", BufferOverrun);
 		}
 
 		if(m_globals[i].address > addressTableLength())
 		{
-			return "Buffer overrun: entry id in global";
+			throw Exception("entry id in global", BufferOverrun);
 		}
 	}
 
@@ -170,23 +179,25 @@ const char * zCZodiacReader::Verify() const
 //  CHECK TypeInfo
 //----------------------
 	if(m_typeInfo + typeInfoLength() > end)
-		return "Buffer overrun: type info";
+		throw Exception("type info", BufferOverrun);
 
 	for(uint32_t i = 0; i < typeInfoLength(); ++i)
 	{
-		if(m_typeInfo[i].name > stringTableLength())
+		auto & typeInfo = m_typeInfo[i];
+
+		if(typeInfo.name > stringTableLength())
 		{
-			return "Buffer overrun: name in typeInfo";
+			throw Exception("name in typeInfo", BufferOverrun);
 		}
 
-		if(m_typeInfo[i].nameSpace > stringTableLength())
+		if(typeInfo.nameSpace > stringTableLength())
 		{
-			return "Buffer overrun: namespace in typeInfo";
+			throw Exception("namespace in typeInfo", BufferOverrun);
 		}
 
-		if(m_typeInfo[i].propertiesBegin + m_typeInfo[i].propertiesLength > propertiesLength())
+		if(typeInfo.propertiesBegin + typeInfo.propertiesLength > propertiesLength())
 		{
-			return "Buffer overrun: properties in typeInfo";
+			throw Exception("properties in typeInfo", BufferOverrun);
 		}
 	}
 
@@ -200,17 +211,15 @@ const char * zCZodiacReader::Verify() const
 	{
 		if(p->name > stringTableLength())
 		{
-			return "Buffer overrun: name in property";
+			throw Exception("name in property", BufferOverrun);
 		}
 
 		if( p->typeId & asTYPEID_MASK_OBJECT
 		&& (p->typeId & asTYPEID_MASK_SEQNBR) > typeInfoLength())
 		{
-			return "Buffer overrun: typeId in property";
+			throw Exception("typeId in property", BufferOverrun);
 		}
 	}
-
-	return nullptr;
 }
 
 
@@ -218,7 +227,7 @@ void zCZodiacReader::ReadSaveData(zREADER_FUNC_t func, void * userData)
 {
 	if(func)
 	{
-		zIFileDescriptor::ReadSubFile(m_file, m_header->saveDataByteOffset, m_header->saveDataByteLength);
+		zIFileDescriptor::ReadSubFile sub_file(m_file, m_header->saveDataByteOffset, m_header->saveDataByteLength);
 		func(this, userData);
 	}
 }
@@ -248,14 +257,53 @@ void zCZodiacReader::RestoreGlobalVariables(asIScriptEngine * engine)
 	}
 }
 
-const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
+template<typename T>
+static asITypeInfo * GetEnumByIndex(T * t, int i) { return t->GetEnumByIndex(i); }
+
+template<typename T>
+static asITypeInfo * GetObjectTypeByIndex(T * t, int i) { return t->GetObjectTypeByIndex(i); }
+
+template<typename T>
+static asITypeInfo * GetTypedefByIndex(T * t, int i) { return t->GetTypedefByIndex(i); }
+
+static asITypeInfo * GetFuncdefByIndex(asIScriptEngine * t, int i) { return t->GetFuncdefByIndex(i); }
+
+template<typename T>
+inline void zCZodiacReader::SolveTypeInfo(T * op, int i, uint32_t & quickCheck, asITypeInfo* (GetterFunc)(T*, int), uint32_t N)
 {
-	uint32_t maxTypeId{};
+	for(uint32_t j = 0; j < N; ++j)
+	{
+		auto typeInfo = GetterFunc(op, j);
+		auto type = GetTypeInfo(i, typeInfo->GetName(), typeInfo->GetNamespace(), &quickCheck);
+
+		if(type != nullptr)
+		{
+			assert(m_asTypeIdFromStored[type - m_typeInfo] == 0);
+			m_asTypeIdFromStored[type - m_typeInfo] = typeInfo->GetTypeId();
+		}
+	}
+}
+
+template<typename T>
+inline void zCZodiacReader::SolveTypeInfo(T * op, int i)
+{
+	uint32_t quickCheck;
+	SolveTypeInfo(op, i, quickCheck, &GetObjectTypeByIndex<T>, op->GetObjectTypeCount());
+	SolveTypeInfo(op, i, quickCheck, &GetEnumByIndex<T>, op->GetEnumCount());
+}
+
+
+void zCZodiacReader::LoadModules(asIScriptEngine * engine)
+{
 	bool     loadedByteCode{};
 
-	m_asTypeIdFromStored.reset(new int[typeInfoLength()]);
+	m_asTypeIdFromStored.resize(typeInfoLength());
 
-//load modules
+	for(int i = 0; i <= asTYPEID_DOUBLE; ++i)
+		m_asTypeIdFromStored[i] = i;
+
+
+//load bytecode
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
 //		bool created = false;
@@ -270,41 +318,19 @@ const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
 
 			loadedByteCode = true;
 		}
-
-		if(!module)
-		{
-			return "module missing!";
-		}
-
-//get type IDs
-		auto noTypes = module->GetObjectTypeCount();
-		for(uint32_t j = 0; j < noTypes; ++j)
-		{
-			auto typeInfo = module->GetObjectTypeByIndex(j);
-			auto type = GetTypeInfo(i, typeInfo->GetName(), typeInfo->GetNamespace());
-
-			if(type != nullptr)
-			{
-				m_asTypeIdFromStored[type - m_typeInfo] = typeInfo->GetTypeId();
-
-				if((m_asTypeIdFromStored[type - m_typeInfo] & asTYPEID_MASK_SEQNBR) > maxTypeId)
-					maxTypeId = m_asTypeIdFromStored[type - m_typeInfo] & asTYPEID_MASK_SEQNBR;
-			}
-		}
 	}
 
-//get registered types
-	auto noTypes = engine->GetObjectTypeCount();
-	for(uint32_t j = 0; j < noTypes; ++j)
+//solve typeinfo
+	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
-		auto typeInfo = engine->GetObjectTypeByIndex(j);
-		auto type = GetTypeInfo(moduleDataLength()-1, typeInfo->GetName(), typeInfo->GetNamespace());
-
-		if(type != nullptr)
-		{
-			m_asTypeIdFromStored[type - m_typeInfo] = typeInfo->GetTypeId();
-		}
+		asIScriptModule * module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
+		if(!module) throw Exception(ModuleDoesNotExist);
+		SolveTypeInfo(module, i);
 	}
+
+	SolveTypeInfo(engine, moduleDataLength()-1);
+	uint32_t quickCheck;
+	SolveTypeInfo(engine, moduleDataLength()-1, quickCheck, &GetFuncdefByIndex, engine->GetFuncdefCount());
 
 //bind imports
 	if(loadedByteCode)
@@ -326,27 +352,27 @@ const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
 	auto end = m_typeInfo + typeInfoLength();
 	for(auto ti = m_typeInfo; ti < end; ++ti)
 	{
-		auto typeId     = m_asTypeIdFromStored[ti->typeId];
+		if(ti->typeId == 0) continue;
 
-		if(typeId == 0)
-			return "engine missing typeId found in save file!";
+		auto _name = LoadString(ti->name);
+		auto _nameSpace = LoadString(ti->nameSpace);
 
-		auto typeInfo = engine->GetTypeInfoById(typeId);
+		auto typeInfo = engine->GetTypeInfoById(m_asTypeIdFromStored[ti - m_typeInfo]);
+		if(typeInfo == nullptr)	throw Exception(BadTypeId);
 
 		int asTypeId;
-
 		auto N = ti->propertiesBegin + ti->propertiesLength;
 
 		uint32_t start{};
 		for(uint32_t i = ti->propertiesBegin; i < N; ++i)
 		{
 			if(m_properties[i].propertyId != ~0u)
-				return "File uses duplicate property address";
+				throw Exception(DuplicatePropertyAddress);
 
 			auto prop = asGetProperty(typeInfo,LoadString(pBegin[i].name), &asTypeId, start);
 
 			if(prop == -1)
-				return "Unable to restore property...";
+				throw Exception(UnableToRestoreProperty);
 
 			start = prop+1;
 
@@ -356,8 +382,6 @@ const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
 			m_properties[i].writeType  = asTypeId;
 		}
 	}
-
-	return nullptr;
 }
 
 int  zCZodiacReader::asGetProperty(asITypeInfo * typeInfo, const char * pName, int * typeId, int from) const
@@ -432,25 +456,37 @@ zCGlobalInfo const* zCZodiacReader::GetGlobalVar(uint32_t module, const char * n
 	return nullptr;
 }
 
-zCTypeInfo const* zCZodiacReader::GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck) const
+zCTypeInfo const* zCZodiacReader::GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t * quickCheck) const
 {
 	auto typeInfo	= (m_typeInfo + m_modules[module].beginTypeInfo);
 	auto End		= typeInfo + m_modules[module].typeInfoLength;
 
-	if(quickCheck < m_modules[module].typeInfoLength)
+	if(nameSpace == nullptr) nameSpace = "";
+
+	if(quickCheck && *quickCheck < m_modules[module].typeInfoLength)
 	{
-		if(strcmp(LoadString(typeInfo[quickCheck].name), name)  == 0
-		&& strcmp(LoadString(typeInfo[quickCheck].nameSpace), nameSpace)  == 0)
+		auto p = &typeInfo[*quickCheck];
+
+		auto _name = LoadString(p->name);
+		auto _nameSpace = LoadString(p->nameSpace);
+
+		if(strcmp(_name, name)  == 0
+		&& strcmp(_nameSpace, nameSpace)  == 0)
 		{
-			return &typeInfo[quickCheck];
+			*quickCheck += 1;
+			return p;
 		}
 	}
 
 	for(auto p = typeInfo; p < End; ++p)
 	{
-		if(strcmp(LoadString(p->name), name)  == 0
-		&& strcmp(LoadString(p->nameSpace), nameSpace)  == 0)
+		auto _name = LoadString(p->name);
+		auto _nameSpace = LoadString(p->nameSpace);
+
+		if(strcmp(_name, name)  == 0
+		&& strcmp(_nameSpace, nameSpace)  == 0)
 		{
+			if(quickCheck) *quickCheck = (p - typeInfo) + 1;
 			return p;
 		}
 	}
@@ -498,7 +534,7 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, uint asTypeId)
 		m_loadedObjects[address].zTypeId  = entry->zTypeId;
 		m_loadedObjects[address].asTypeId = entry->asTypeId;
 
-		zIFileDescriptor::ReadSubFile(m_file, m_entries[address].offset, m_entries[address].byteLength);
+		zIFileDescriptor::ReadSubFile sub_file(m_file, m_entries[address].offset, m_entries[address].byteLength);
 
 		void * tmp;
 		(entry->onLoad)(this, &tmp, m_loadedObjects[address].zTypeId);
@@ -765,7 +801,8 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 	}
 	else if(m_functions[id].module)
 	{
-		auto module = GetEngine()->GetModule(LoadString(m_functions[id].module), asGM_ONLY_IF_EXISTS);
+		auto moduleName = LoadString(m_functions[id].module);
+		auto module = GetEngine()->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
 		if(!module)
 			throw Exception(ModuleDoesNotExist);

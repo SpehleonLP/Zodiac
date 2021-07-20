@@ -110,7 +110,7 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 
 //write stack frames
 	StackFrame sf;
-	for(int i = ctx->GetCallstackSize()-1; i >= 0; ++i)
+	for(int i = ctx->GetCallstackSize()-1; i >= 0; --i)
 	{
 		sf.varCount		= ctx->GetVarCount();
 
@@ -209,7 +209,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 //write stack frames
 	StackFrame sf;
-	for(int i = ctx->GetCallstackSize()-1; i >= 0; ++i)
+	for(uint32_t i = 0; i < callStackSize; ++i)
 	{
 		file->Read(&sf);
 
@@ -227,6 +227,8 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 //write current registers
 	file->Read(&sf);
+	assert(sf.varCount == 0);
+	assert(sf.isCallState == 2);
 	sf.state.SetToContext(reader, ctx, 0);
 
 //write variable contents

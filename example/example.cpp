@@ -184,6 +184,17 @@ std::unique_ptr<Zodiac::zIZodiac> CreateZodiac(asIScriptEngine * engine, SaveDat
 
 int LogResult(asIScriptContext * ctx, bool can_suspend = true);
 
+bool LoadFromFile(Zodiac::zIZodiac * zodiac, const char * filename)
+{
+	FILE * fp = fopen(filename, "rb");
+
+	if(fp == nullptr)
+		return false;
+
+	auto file = Zodiac::FromCFile(&fp);
+	return zodiac->LoadFromFile(file.get());
+}
+
 int Run()
 {
 	// Perform memory leak validation in debug mode
@@ -215,15 +226,7 @@ int Run()
 
 
 // try to restore
-	FILE * fp = nullptr; //fopen("save_file.z", "rb");
-
-	if(fp != nullptr)
-	{
-	//use pointer to fp to signify taking ownership and closing when the class is deleted
-		auto file = Zodiac::FromCFile(&fp);
-		zodiac->LoadFromFile(file.get());
-	}
-	else
+	if(!LoadFromFile(zodiac.get(), "save_file.zdc"))
 	{
 // restore failed create context
 		auto script = ReadFile("main.as");
@@ -258,18 +261,20 @@ int Run()
 		auto time_diff = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now() - start_time).count();
 
 		if(time_diff > 5)
+		{
 			ShouldSave = true;
+		}
 	};
 
 // finished delete save
 	if(!ShouldSave)
 	{
-		remove("save_file.z");
+		remove("save_file.zdc");
 	}
 // suspended create save
 	else
 	{
-		FILE * fp = fopen("save_file.z", "wb");
+		FILE * fp = fopen("save_file.zdc", "wb");
 
 //use pointer to fp to signify taking ownership and closing when the class is deleted
 		auto file = Zodiac::FromCFile(&fp);

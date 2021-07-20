@@ -34,18 +34,28 @@ enum Code
 	BufferOverrun,
 	BadObjectAddress,
 	BadFunctionInfo,
+
 	DuplicateObjectAddress,
 	ObjectRestoreTypeMismatch,
 	ObjectUnserializable,
 	BadTypeId,
+
 	InconsistentObjectType,
 	InconsistentObjectOwnership,
 	OwnerNotEncoded,
 	UnknownEncodingProtocol,
+
 	ModuleDoesNotExist,
 	DoubleLoad,
 	CantSaveContextWithoutBytecode,
 	ContextNotSuspended,
+
+	DuplicatePropertyAddress,
+	UnableToRestoreProperty,
+
+	BadSubFileAddress,
+
+	BadFileType,
 	Total
 };
 
@@ -55,14 +65,15 @@ public:
 
 	const char * ToString(int code)
 	{
-		if((uint)code > Total)
+		if((uint)code >= Total)
 			return "";
 
-		const char * strings[] = {
+		static const char * strings[] = {
 			"Casting Exception",
-			"Buffer Overrun"
+			"Buffer Overrun",
 			"Bad Object Address",
 			"Bad Function Info",
+
 			"DuplicateObject Address",
 			"Object Restore Type Mismatch",
 			"Object Unserializable",
@@ -75,19 +86,22 @@ public:
 			"Double Load",
 			"Cant Save Context Without Bytecode",
 			"Context Not Suspended",
+			"Duplicate Property Address",
+			"Unable To Restore Property",
+			"Bad Sub File Address",
+			"Bad File Type"
 		};
 
 		return strings[code];
 	}
 
 
-	Exception(Code code) :	text(ToString(code)) { }
-	Exception(std::string const& text, Code code) :	text(ToString(code) + (": " + text)) { }
+	Exception(Code code) :	text(ToString(code)), code(code) { }
+	Exception(std::string const& text, Code code) :	text(ToString(code) + (": " + text)), code(code) { }
 	const char * what() const noexcept { return text.c_str(); }
 
-private:
 	std::string text;
-
+	const Code code;
 };
 
 enum Flags
@@ -141,7 +155,7 @@ public:
 
 // progress / total steps for progress bar.
 	virtual void    SaveToFile(zIFileDescriptor *) = 0;
-	virtual void    LoadFromFile(zIFileDescriptor *) = 0;
+	virtual bool    LoadFromFile(zIFileDescriptor *) = 0;
 
 	virtual void  SetPreRestoreCallback(zFUNCTION_t callback) = 0;
 	virtual void  SetPreSavingCallback(zFUNCTION_t callback) = 0;
@@ -154,6 +168,9 @@ public:
 
 	virtual int   GetAsTypeIdFromZTypeId(int asTypeId) const = 0;
 	virtual int   GetZTypeIdFromAsTypeId(int asTypeId) const = 0;
+
+	virtual const char * GetErrorString() = 0;
+	virtual Code		 GetErrorCode() = 0;
 
 	//does not copy string, assumes read only memory
 	template<typename T>
@@ -286,6 +303,7 @@ public:
 	virtual asIScriptFunction * LoadFunction(int id) = 0;
 //always refcounts
 	virtual asIScriptContext * LoadContext(int id) = 0;
+
 
 private:
 	template<typename U>

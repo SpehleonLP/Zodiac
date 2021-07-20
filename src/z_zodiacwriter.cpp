@@ -15,11 +15,32 @@ zCZodiacWriter::zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_progress(progress),
 	m_totalSteps(totalSteps)
 {
+	Node n;
+	memset(&n, 0, sizeof(n));
+	m_stack.push_back(n);
 }
 
 
 int zCZodiacWriter::EnqueueNode(Node node)
 {
+	if(node.asTypeId > 0)
+	{
+		if(node.asTypeId & asTYPEID_OBJHANDLE)
+		{
+			node.address = *(void const**)node.address;
+			node.asTypeId &= ~asTYPEID_OBJHANDLE;
+			node.owner = nullptr;
+		}
+
+		if(node.asTypeId & asTYPEID_SCRIPTOBJECT)
+		{
+			auto ref = (asIScriptObject*)node.address;
+			node.asTypeId = ref? ref->GetTypeId() : asTYPEID_VOID;
+		}
+	}
+
+	assert(node.asTypeId < 0 || (node.asTypeId & asTYPEID_OBJHANDLE) == false);
+
 	int address{};
 	int closest{};
 
@@ -29,7 +50,16 @@ int zCZodiacWriter::EnqueueNode(Node node)
 			node.zTypeId = zIZodiac::GetTypeId<asIScriptObject>();
 
 		m_addressIndex.insert(m_addressIndex.begin()+closest, {node.address, m_stack.size()});
+		address = m_stack.size();
+
 		m_stack.push_back(node);
+
+#ifndef NDEBUG
+		for(uint32_t i = 1; i < m_addressIndex.size(); ++i)
+		{
+			assert(m_addressIndex[i-1].first < m_addressIndex[i].first);
+		}
+#endif
 
 		return m_stack.size()-1;
 	}
@@ -53,7 +83,10 @@ int zCZodiacWriter::EnqueueNode(Node node)
 		{
 			if(!(node.asTypeId & asTYPEID_SCRIPTOBJECT)
 			&  !(stack.asTypeId & asTYPEID_SCRIPTOBJECT))
+			{
+				HaveAddress(node.address, &closest, &address);
 				throw Exception(InconsistentObjectType);
+			}
 		}
 	}
 
@@ -88,7 +121,7 @@ bool zCZodiacWriter::HaveAddress(void const* value, int * closest, int * address
 		else
 		{
 			if(closest) *closest = avg;
-			*address = m_addressIndex[avg].second;
+			if(address) *address = m_addressIndex[avg].second;
 			return true;
 		}
 	}
@@ -98,13 +131,13 @@ bool zCZodiacWriter::HaveAddress(void const* value, int * closest, int * address
 		if(m_addressIndex[i].first >= value)
 		{
 			if(closest) *closest = i;
-			if(address) *address = m_addressIndex.size();
+			if(address) *address = m_addressIndex[i].second;
 			return  (m_addressIndex[i].first == value);
 		}
 	}
 
-	if(closest) *closest = 0;
-	if(address) *address = 0;
+	if(closest) *closest = m_addressIndex.size();
+	if(address) *address = m_addressIndex.size();
 
 	return false;
 }
@@ -116,8 +149,6 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 
 	if(WriteDelegate(ref, asTypeId))
 		return;
-
-	auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
 
 	if(asTypeId & asTYPEID_SCRIPTOBJECT )
 	{
@@ -140,7 +171,7 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 			}
 			else if(childId & asTYPEID_SCRIPTOBJECT)
 			{
-				uint32_t id_no = SaveScriptObject(address, childId, this);
+				uint32_t id_no = SaveScriptObject(address, childId, obj);
 				m_file->Write(&id_no, sizeof(uint32_t));
 			}
 			else if(childId & asTYPEID_APPOBJECT)
@@ -165,7 +196,7 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 					node.address = address;
 					node.asTypeId = childId;
 					node.zTypeId = -1;
-					node.owner = this;
+					node.owner = obj;
 					node.save_func = entry->onSave;
 
 					int id_no = EnqueueNode(node);
@@ -219,6 +250,9 @@ bool zCZodiacWriter::WriteDelegate(void const* ptr, int typeId)
 
 void zCZodiacWriter::ProcessQueue()
 {
+	m_file->seek(0, zFILE_END);
+	m_header.savedObjectOffset = m_file->tell();
+
 	m_addressTable.reserve(m_stack.size());
 
 	zCEntry buffer;
@@ -228,10 +262,16 @@ void zCZodiacWriter::ProcessQueue()
 		buffer.offset = m_file->tell();
 		buffer.typeId = SaveTypeId(m_stack[i].asTypeId);
 		buffer.owner = 0;
-		WriteObject(m_stack[i], &buffer.byteLength);
+		buffer.byteLength = 0;
+
+		if(m_stack[i].address != nullptr)
+			WriteObject(m_stack[i], buffer.offset, buffer.byteLength);
 
 		m_addressTable.push_back(buffer);
 	}
+
+	m_file->seek(0, zFILE_END);
+	m_header.savedObjectLength = m_file->tell() - m_header.savedObjectOffset;
 
 	int address{};
 	int closest{};
@@ -246,12 +286,15 @@ void zCZodiacWriter::ProcessQueue()
 
 		m_addressTable[i].owner  = address;
 	}
+
 }
 
-void zCZodiacWriter::WriteObject(Node & n, uint32_t * byteLength)
+void zCZodiacWriter::WriteObject(Node & n, uint32_t & offset, uint32_t & byteLength)
 {
 	m_file->seek(0, zFILE_END);
-	zIFileDescriptor::WriteSubFile sub_file(m_file, byteLength);
+	offset = m_file->tell();
+	zIFileDescriptor::WriteSubFile sub_file(m_file, &byteLength);
+	assert(offset == m_file->SubFileOffset());
 
 	if(n.save_func)
 	{
@@ -290,10 +333,7 @@ void zCZodiacWriter::SaveModules(asIScriptEngine * engine, bool saveByteCode, bo
 	memset(&modules.back(), 0, sizeof(modules[0]));
 
 	WriteByteCode(engine, modules, saveByteCode, stripDebugInfo);
-
-	m_header.typeInfoOffset = m_file->tell();
 	WriteTypeInfo(engine, modules);
-	m_header.typeInfoLength = (m_file->tell() - m_header.typeInfoOffset) / sizeof(zCTypeInfo);
 
 	m_header.globalsOffset = m_file->tell();
 	WriteGlobalVariables(engine, modules);
@@ -319,65 +359,98 @@ uint32_t zCZodiacWriter::CountTypes(asIScriptEngine * engine)
 
 void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModule> & modules)
 {
-	std::vector<zCTypeInfo> buffer(CountTypes(engine));
-	zCTypeInfo * p = buffer.data();
+	for(uint32_t i = 0; i <= asTYPEID_DOUBLE; ++i)
+	{
+		m_typeList.push_back(i);
+	}
+
+	for(uint32_t i = 0; i < engine->GetObjectTypeCount(); ++i)
+	{
+		m_typeList.push_back(engine->GetObjectTypeByIndex(i)->GetTypeId());
+	}
+
+	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
+	{
+		m_typeList.push_back(engine->GetFuncdefByIndex(i)->GetTypeId());
+	}
+
+	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
+	{
+		auto mod = engine->GetModuleByIndex(i);
+
+		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
+		{
+			m_typeList.push_back(mod->GetObjectTypeByIndex(j)->GetTypeId());
+		}
+	}
+
+	m_header.propertiesOffset = m_file->tell();
+	auto buffer = WriteProperties(engine, modules);
+	m_header.propertiesLength = (m_file->tell() - m_header.propertiesOffset) / sizeof(zCProperty);
+
+	size_t begin = 0;
+	for(uint32_t i = 0; i < buffer.size(); ++i)
+	{
+		buffer[i].propertiesBegin = begin;
+		begin += buffer[i].propertiesLength;
+	}
+
+	for(uint32_t i = 0; i < modules.size(); ++i)
+	{
+		modules[i].typeInfoLength -= modules[i].beginTypeInfo;
+	}
+
+	m_header.typeInfoOffset = m_file->tell();
+	m_file->Write(buffer.data(), buffer.size());
+	m_header.typeInfoLength = (m_file->tell() - m_header.typeInfoOffset) / sizeof(zCTypeInfo);
+}
+
+std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine, std::vector<zCModule> & modules)
+{
+	std::vector<zCTypeInfo> buffer;
+	buffer.reserve(CountTypes(engine) + asTYPEID_DOUBLE);
 
 //these need to match to something so just 0 it out.
 	zCTypeInfo info;
 	memset(&info, 0, sizeof(info));
 	for(uint32_t i = 0; i <= asTYPEID_DOUBLE; ++i)
 	{
-		m_file->Write(&info);
-		m_typeList.push_back(i);
+		buffer.push_back(info);
 	}
 
 	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
 	{
-		modules[i].beginTypeInfo = p - buffer.data();
+		modules[i].beginTypeInfo = buffer.size();
 
 		auto mod = engine->GetModuleByIndex(i);
 
-		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j, ++p)
+		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
-			*p = WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false);
+			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
 		}
 
-		modules[i].typeInfoLength = (p - buffer.data()) - modules[i].beginTypeInfo;
+		modules[i].typeInfoLength = buffer.size();
 	}
 
-	modules.back().beginTypeInfo = p - buffer.data();
+	modules.back().beginTypeInfo = buffer.size();
 
-	for(uint32_t i = 0; i < engine->GetObjectTypeCount(); ++i, ++p)
+	for(uint32_t i = 0; i < engine->GetObjectTypeCount(); ++i)
 	{
-		*p = WriteTypeInfo(engine, nullptr, engine->GetObjectTypeByIndex(i), false);
+		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetObjectTypeByIndex(i), false));
 	}
 
-	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i, ++p)
+	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
 	{
-		*p = WriteTypeInfo(engine, nullptr, engine->GetFuncdefByIndex(i), false);
+		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetFuncdefByIndex(i), false));
 	}
 
-	modules.back().typeInfoLength = p - buffer.data();
+	modules.back().typeInfoLength = buffer.size();
 
-	assert(p == buffer.data() + buffer.size());
-
-	uint32_t begin = m_file->tell();
-
-	for(uint32_t i = 0; i < modules.size(); ++i)
-	{
-		modules[i].typeInfoLength -= modules[i].beginTypeInfo;
-//convert to byte offset
-		modules[i].beginTypeInfo   = modules[i].beginTypeInfo * sizeof(zCTypeInfo) + begin;
-	}
-
-
-	m_file->Write(buffer.data(), buffer.size());
+	return buffer;
 }
 
 zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * module, asITypeInfo * type, bool registered)
 {
-	m_typeList.push_back(type->GetTypeId());
-
 	zCTypeInfo info;
 
 	auto func = type-> GetFuncdefSignature();
@@ -388,6 +461,8 @@ zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModu
 	info.isFuncDef = func != nullptr;
 	info.isRegistered = registered;
 	info.propertiesBegin = m_file->tell();
+
+	assert(strcmp(&stringContents[info.name], type->GetName()) == 0);
 
 	if(!registered && !func)
 	{
@@ -401,7 +476,7 @@ zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModu
 			type->GetProperty(i, &name, &typeId, nullptr, nullptr, &offset);
 
 			buffer.name = SaveString(name);
-			buffer.typeId = typeId;
+			buffer.typeId = SaveTypeId(typeId);
 			buffer.offset = offset;
 			buffer.byteLength = GetByteLengthOfType(engine, module, typeId);
 
@@ -432,6 +507,8 @@ uint32_t zCZodiacWriter::GetByteLengthOfType(asIScriptEngine * engine, asIScript
 
 void zCZodiacWriter::WriteByteCode(asIScriptEngine * engine, std::vector<zCModule> & modules, bool saveByteCode, bool stripDebugInfo)
 {
+	m_header.byteCodeOffset = m_file->tell();
+
 	for(uint32_t i = 0; i <  engine->GetModuleCount(); ++i)
 	{
 		modules[i].byteCodeOffset = m_file->tell();
@@ -443,6 +520,8 @@ void zCZodiacWriter::WriteByteCode(asIScriptEngine * engine, std::vector<zCModul
 
 		modules[i].byteCodeLength = m_file->tell() - modules[i].byteCodeOffset;
 	}
+
+	m_header.byteCodeByteLength = m_file->tell() - m_header.byteCodeOffset;
 }
 
 void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<zCModule> & modules)
@@ -573,23 +652,27 @@ int zCZodiacWriter::SaveString(const char * string)
 			return stringAddress[i];
 		else if(cmp > 0)
 		{
-			stringAddress.insert(stringAddress.begin()+i, stringContents.size());
-
-			auto len = strlen(string);
-			stringContents.resize(stringContents.size()+len);
-			strncpy(&stringContents[stringAddress.back()], string, len);
-
-			return stringAddress.back();
+			uint32_t address = InsertString(string);
+			stringAddress.insert(stringAddress.begin()+i, address);
+			return address;
 		}
 	}
 
-	stringAddress.push_back(stringContents.size());
-
-	auto len = strlen(string);
-	stringContents.resize(stringContents.size()+len);
-	strncpy(&stringContents[stringAddress.back()], string, len);
+	stringAddress.push_back(InsertString(string));
 
 	return stringAddress.back();
+}
+
+uint32_t zCZodiacWriter::InsertString(const char * string)
+{
+	uint32_t address = stringContents.size();
+
+	auto len = strlen(string);
+	stringContents.resize(stringContents.size()+len+1);
+	strncpy(&stringContents[address], string, len);
+	stringContents[address+len] = 0;
+
+	return address;
 }
 
 int zCZodiacWriter::SaveTypeId(int typeId)
@@ -632,7 +715,14 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 
 int zCZodiacWriter::SaveFunction(asIScriptFunction const* func)
 {
-	if(func == nullptr) return -1;
+	if(m_functionList.empty())
+	{
+		zCFunction function;
+		memset(&function, 0, sizeof(function));
+		m_functionList.push_back(function);
+	}
+
+	if(func == nullptr)	return 0;
 
 //extract
 	auto type = func->GetDelegateObjectType();
@@ -685,14 +775,6 @@ int zCZodiacWriter::SaveScriptObject(void const* t, uint32_t asTypeId, void cons
 
 	Node node;
 
-	if(asTypeId & asTYPEID_OBJHANDLE)
-	{
-		t = *(void const**)t;
-		asTypeId &= ~asTYPEID_OBJHANDLE;
-		ownr = nullptr;
-	}
-
-
 	node.address   = t;
 	node.asTypeId  = asTypeId;
 	node.zTypeId   = -1;
@@ -704,6 +786,8 @@ int zCZodiacWriter::SaveScriptObject(void const* t, uint32_t asTypeId, void cons
 
 int  zCZodiacWriter::SaveObject(void const* ptr, int zTypeId, zSAVE_FUNC_t func)
 {
+	assert(zTypeId != zIZodiac::GetTypeId<asIScriptObject>());
+
 	if(ptr == nullptr)
 		return 0;
 
@@ -714,6 +798,7 @@ int  zCZodiacWriter::SaveObject(void const* ptr, int zTypeId, zSAVE_FUNC_t func)
 	node.zTypeId   = zTypeId;
 	node.owner     = nullptr;
 	node.save_func = func;
+
 
 	return EnqueueNode(node);
 }

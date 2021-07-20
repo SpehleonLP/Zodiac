@@ -24,7 +24,7 @@ struct TypeEntry;
 	bool    GetProperty(zZodiacProp property) const override { return m_options & (1 << property); }
 
 	void    SaveToFile(zIFileDescriptor *)	 override;
-	void    LoadFromFile(zIFileDescriptor *) override;
+	bool	LoadFromFile(zIFileDescriptor *) override;
 
 	void  SetPreRestoreCallback(zFUNCTION_t cb)			 override { m_preRestoreCallback = cb;  }
 	void  SetPreSavingCallback(zFUNCTION_t cb)			 override { m_preSavingCallback = cb;  }
@@ -46,6 +46,8 @@ struct TypeEntry;
 	TypeEntry const* GetTypeEntryFromAsTypeId(int asTypeId) const;
 	TypeEntry const* GetTypeEntryFromZTypeId(int zTypeId) const;
 
+	const char * GetErrorString() override { return error_string.data(); }
+	Code		 GetErrorCode() override { return error_code; }
 
 private:
 	void SortTypeList();
@@ -76,6 +78,9 @@ private:
 		~ClearBoolOnDestruct() {_it_ = false; }
 		std::atomic<bool> & _it_;
 	};
+
+	std::string error_string;
+	Code		error_code;
 };
 
 struct zCZodiac::TypeEntry

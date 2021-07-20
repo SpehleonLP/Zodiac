@@ -59,7 +59,7 @@ struct zCProperty
 	uint name;
 	uint typeId;
 	uint offset;
-	uint byteLength;
+	int  byteLength;
 };
 
 struct zCHeader

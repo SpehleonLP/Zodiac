@@ -62,15 +62,18 @@ typedef std::pair<void const*, int> VoidIntPair;
 
 	bool HaveAddress(const void * value, int * closest, int * address) const;
 	int EnqueueNode(Node node);
-	void WriteObject(Node & n, uint32_t * byteLength);
+	void WriteObject(Node & n, uint32_t & offset, uint32_t & byteLength);
 	bool WriteDelegate(const void * ptr, int typeId);
 
 	void WriteByteCode(asIScriptEngine * engine, std::vector<zCModule> & modules, bool saveByteCode, bool stripDebugInfo);
 	void WriteGlobalVariables(asIScriptEngine * engine, std::vector<zCModule> & modules);
 	void WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModule> & modules);
+	std::vector<zCTypeInfo> WriteProperties(asIScriptEngine * engine, std::vector<zCModule> & modules);
+
 	zCTypeInfo WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * module, asITypeInfo * type, bool registered);
 	void WriteScriptObject(const void * ptr, int typeId);
 	uint32_t GetByteLengthOfType(asIScriptEngine * engine, asIScriptModule * module, uint32_t typeId);
+	uint32_t InsertString(const char * string);
 
 	zCZodiac		 *    m_parent;
 	zIFileDescriptor *    m_file;

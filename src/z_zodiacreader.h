@@ -20,7 +20,7 @@ public:
 
 	int GetModuleIndex(const char * name, uint32_t quickCheck = ~0u) const;
 	zCGlobalInfo const* GetGlobalVar(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
-	zCTypeInfo const* GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
+	zCTypeInfo const* GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t * quickCheck = nullptr) const;
 	void GetProperties(int typeId, zCProperty const*& begin, zCProperty const*& end) const;
 	int  asGetProperty(asITypeInfo * typeInfo, const char * name, int * typeId, int from = 0) const;
 
@@ -41,7 +41,7 @@ public:
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
 	void LoadScriptObject(void *, uint asTypeId) override;
 
-	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringAddressCount()? &m_stringTable[m_stringAddresses[id]] : nullptr;  }
+	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringTableLength()? &m_stringTable[id] : nullptr;  }
 	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
 	int					LoadTypeId(int id) override;
 	asIScriptFunction * LoadFunction(int id) override;
@@ -49,11 +49,11 @@ public:
 	void *				LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
 	void				LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType) override;
 
-	const char * Verify() const;
+	void Verify() const;
 
 private:
 friend class zCZodiac;
-	const char * LoadModules(asIScriptEngine *);
+	void LoadModules(asIScriptEngine *);
 	void ReadSaveData(zREADER_FUNC_t, void *);
 	void RestoreGlobalVariables(asIScriptEngine *);
 
@@ -63,6 +63,12 @@ friend class zCZodiac;
 	bool RestoreAppObject(void * dst, int address, uint asTypeId);
 	void RestoreScriptObject(void * dst, const void * src, uint asTypeId);
 	bool RestoreFunction(void ** dst, uint32_t handle, asITypeInfo * typeInfo);
+
+	template<typename T>
+	void SolveTypeInfo(T * op, int i, uint32_t & quickCheck, asITypeInfo* (*)(T*, int), uint32_t N);
+
+	template<typename T>
+	void SolveTypeInfo(T * op, int i);
 
 	zCZodiac * m_parent;
 	zIFileDescriptor * m_file;
@@ -96,13 +102,14 @@ friend class zCZodiac;
 		int needRelease;
 	};
 
-	std::unique_ptr<int[]>		m_asTypeIdFromStored;
+	std::vector<int>		m_asTypeIdFromStored;
 	std::unique_ptr<LoadedInfo[]>	m_loadedObjects;
 	std::unique_ptr<void*[]>	m_loadedFunctions;
 
 	std::atomic<int> & m_progress;
 	std::atomic<int> & m_totalSteps;
 };
+
 
 }
 

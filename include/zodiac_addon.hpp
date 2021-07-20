@@ -21,19 +21,22 @@
 
 #include <string>
 #include <cassert>
+#include <cstring>
 
 namespace Zodiac
 {
 #ifdef CONTEXTMGR_H
 	void ZodiacSaveContextManager(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int&)
 	{
-		uint32_t time{};
+		int64_t time{};
 		if(mgr->m_getTimeFunc)
 		{
 			time = (mgr->m_getTimeFunc)();
 		}
 
 		auto file = writer->GetFile();
+
+		auto spot = file->SubFileOffset();
 
 		uint32_t noThreads = mgr->m_threads.size();
 		uint32_t curThread = mgr->m_currentThread;
@@ -43,7 +46,7 @@ namespace Zodiac
 
 		for(auto p : mgr->m_threads)
 		{
-			int sleepUntil = (int64_t)p->sleepUntil - time;
+			int sleepUntil = std::max<int64_t>((int64_t)p->sleepUntil - time, 0);
 			uint32_t size = p->coRoutines.size();
 
 			file->Write(&sleepUntil);
@@ -72,6 +75,8 @@ namespace Zodiac
 
 		auto file = reader->GetFile();
 
+		auto spot = file->SubFileOffset();
+
 		uint32_t noThreads{};
 		uint32_t curThread{};
 
@@ -84,9 +89,9 @@ namespace Zodiac
 		for(auto & p : mgr->m_threads)
 		{
 			p = new CContextMgr::SContextInfo();
-			int sleepUntil;
-			uint32_t size;
-			int thread_id;
+			int sleepUntil{};
+			uint32_t size{};
+			int thread_id{};
 
 			file->Read(&sleepUntil);
 			file->Read(&p->currentCoRoutine);
@@ -239,12 +244,22 @@ namespace Zodiac
 	{
 		assert(dict != nullptr);
 
-		uint64_t value = dict->m_valueInt;
-		int      typeId  = dict->m_typeId;
+		int64_t  value;
+		int      typeId  = dict->GetTypeId();
 
-		if(typeId > asTYPEID_DOUBLE)
+		if(typeId < asTYPEID_FLOAT)
 		{
-			value =  writer->SaveScriptObject(reinterpret_cast<void*>(value), typeId, dict);
+			dict->Get(writer->GetEngine(), value);
+		}
+		else if(typeId <= asTYPEID_DOUBLE)
+		{
+			double dbl;
+			dict->Get(writer->GetEngine(), dbl);
+			memcpy(&value, &dbl, sizeof(double));
+		}
+		else
+		{
+			value =  writer->SaveScriptObject(dict->GetAddressOfValue(), typeId, dict);
 		}
 
 		writer->GetFile()->Write(&typeId);
@@ -255,22 +270,28 @@ namespace Zodiac
 	{
 		assert(dict != nullptr);
 
-		uint64_t value{};
+		int64_t  value{};
 		int      typeId{};
 
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&value);
 
-		if(typeId > asTYPEID_DOUBLE)
+		if(typeId < asTYPEID_FLOAT)
+		{
+			dict->Set(reader->GetEngine(), value);
+
+		}
+		else if(typeId <= asTYPEID_DOUBLE)
+		{
+			double dbl;
+			memcpy(&dbl, &value, sizeof(double));
+			dict->Set(reader->GetEngine(), value);
+		}
+		else
 		{
 			reader->LoadScriptObject(&value, value, typeId);
+			dict->DeserializePointer((void*)value, typeId);
 		}
-
-//if it was a pointer before it got moved out
-		assert(dict->m_typeId <= asTYPEID_DOUBLE);
-
-		dict->m_valueInt = value;
-		dict->m_typeId 	 = value;
 	}
 
 	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictionary const* dict, int&)
@@ -285,8 +306,8 @@ namespace Zodiac
 		for(auto & itr : *dict)
 		{
 			int real_type;
-			ZodiacSave(writer, &itr.m_it->first, real_type);
-			ZodiacSave(writer, &itr.m_it->second, real_type);
+			ZodiacSave(writer, &itr.GetKey(), real_type);
+			ZodiacSave(writer, &itr.GetValue(), real_type);
 		}
 	}
 
