@@ -1,4 +1,5 @@
 #include "z_zodiaccontext.h"
+#ifdef HAVE_ZODIAC
 #include <cassert>
 
 struct CtxCallState
@@ -97,7 +98,7 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 	auto file = writer->GetFile();
 	auto ctx = const_cast<asIScriptContext*>(_ctx);
 
-	if(ctx == nullptr)
+	if(ctx == nullptr || !writer->SaveByteCode())
 	{
 		uint32_t callStackSize = 0;
 		file->Write(&callStackSize);
@@ -150,6 +151,46 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 	}
 }
 
+static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx, int var, int stack, int address, int asTypeId)
+{
+	if(asTypeId <= asTYPEID_DOUBLE)
+	{
+		asQWORD object;
+		reader->LoadScriptObject(&object, address, asTypeId);
+		ctx->SetVarContents(var, stack, &object, asTypeId);
+		return;
+	}
+	else if(asTypeId & asTYPEID_SCRIPTOBJECT)
+	{
+		void * object{};
+		reader->LoadScriptObject(&object, address, asTypeId | asTYPEID_OBJHANDLE);
+		ctx->SetVarContents(var, stack, object, asTypeId);
+		return;
+	}
+	else if(asTypeId & asTYPEID_APPOBJECT)
+	{
+		auto typeInfo = reader->GetEngine()->GetTypeInfoById(asTypeId);
+
+		if(typeInfo && typeInfo->GetFuncdefSignature())
+		{
+			void * object{};
+			reader->LoadScriptObject(&object, address, asTypeId);
+			ctx->SetVarContents(var, stack, object, asTypeId);
+			return;
+		}
+
+		int size = std::max<int>(typeInfo->GetSize(), 8);
+		std::unique_ptr<uint8_t[]> object(new uint8_t[size]);
+//dunno its something
+		reader->LoadScriptObject(&object[0], address, asTypeId);
+		ctx->SetVarContents(var, stack, &object[0], asTypeId);
+		return;
+	}
+
+	assert(false);
+}
+
+
 void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 {
 	auto file = reader->GetFile();
@@ -179,8 +220,8 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 		}
 		else
 		{
-			sf.state.SetToContext(reader, ctx, 0);
 			ctx->PushState();
+			sf.state.SetToContext(reader, ctx, 1);
 		}
 	}
 
@@ -204,13 +245,11 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			assert(var.stackLevel == i);
 			assert(var.varId == j);
 
-			int typeId   = reader->LoadTypeId(var.typeId);
-			auto object = reader->LoadScriptObject(var.object, typeId);
-
-			ctx->SetVarContents(j, i, object.get(), typeId);
+			zLoadVariable(reader, ctx, j, i, var.object, reader->LoadTypeId(var.typeId));
 		}
 	}
 
 	ctx->FinishDeserialization();
 }
 
+#endif

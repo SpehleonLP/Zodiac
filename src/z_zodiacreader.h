@@ -47,6 +47,7 @@ public:
 	asIScriptFunction * LoadFunction(int id) override;
 	asIScriptContext *  LoadContext(int id) override;
 	void *				LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
+	void				LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType) override;
 
 	const char * Verify() const;
 

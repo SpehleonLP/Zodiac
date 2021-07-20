@@ -13,7 +13,7 @@ class zCFile : public zIFileDescriptor
 {
 public:
 	static std::unique_ptr<zIFileDescriptor> Factory(FILE *);
-	static std::unique_ptr<zIFileDescriptor> Factory(FILE *&&);
+	static std::unique_ptr<zIFileDescriptor> Factory(FILE **);
 
 	zCFile() = delete;
 	zCFile(zCFile const&) = delete;
@@ -30,8 +30,6 @@ public:
 
 
 protected:
-friend zIFileDescriptor * FromCFile(FILE *);
-friend zIFileDescriptor * FromCFile(FILE **);
 	zCFile(FILE*, bool owns);
 
 	void PushSubFile(uint offset, uint byteLength) override;

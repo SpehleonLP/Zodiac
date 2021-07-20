@@ -1,16 +1,23 @@
 
+interface iTrain
+{
+	string get_name();
+	void OnStartRoute();
+	void OnEndRoute();
+	bool TravelDistance(float length);
+};
+
 //test loading primitives and POD
 class Train
 {
 
-	Train(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
+	Train(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased)
 	{
-		name = _name;
+		model = _name;
 		passengers = _passengers;
 		year = _year;
 		speed = _speed;
 		purchased = _purchased;
-		energyEfficiency = efficiency;
 	}
 	
 
@@ -19,40 +26,37 @@ class Train
 	int      year;
 	float	 speed;
 	datetime purchased;
-
-	virtual void OnStartRoute() {}
-	virtual void OnEndRoute() {}
-	virtual bool TravelDistance(float length) { return false; }
 	
-	virtual void Print()
+	void Print()
 	{
 		Println("\t \"model\" : \"", model , "\"");
 		Println("\t \"passengers\" : ", passengers);
 		Println("\t \"year\" : ", year);
 		Println("\t \"speed\" : ", speed);
-		Println("\t \"purchased\" : " , purchased.year());
+		Println("\t \"purchased\" : " , purchased.year);
 	}	
 };
 
 //test loading sub classes
-class ElectricTrain : public Train
+class ElectricTrain : Train, iTrain
 {
 	ElectricTrain(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
 	{
-		Train(_name, _passengers, _year, _speed, _purchased);
+		super(_name, _passengers, _year, _speed, _purchased);
 		energyEfficiency = efficiency;
 	}
 	
 	float  charge;
 	float  energyEfficiency;
 	
+	string get_name() { return model; }
 	void OnStartRoute() { charge = 1000.0; }
 	void OnEndRoute() {}
 	
 	bool TravelDistance(float length)
 	{
 		float time = speed / length;
-		sleep(time * 1000);
+		sleep(int(time*1000));
 		charge -= (1.0 - energyEfficiency) * speed * time;
 		return charge > 0;
 	}
@@ -67,11 +71,11 @@ class ElectricTrain : public Train
 	}
 };
 
-class DeiselTrain : public Train
+class DeiselTrain : Train, iTrain
 {
-	ElectricTrain(string _name, int _passengers, int _year, float _speed, datetime _purchased, float efficiency)
+	DeiselTrain(string _name, int _passengers, int _year, float _speed, datetime _purchased, float efficiency)
 	{
-		Train(_name, _passengers, _year, _speed, _purchased);
+		super(_name, _passengers, _year, _speed, _purchased);
 		engineEfficiency = efficiency;
 		testString = "testString";
 	}
@@ -80,13 +84,15 @@ class DeiselTrain : public Train
 	float  engineEfficiency;
 	float  fuel;
 	
+	string get_name() { return model; }
+	
 	void OnStartRoute() { fuel = 1000.0; }
 	void OnEndRoute() {}
 	
 	bool TravelDistance(float length)
 	{
 		float time = speed / length;
-		sleep(time * 1000);
+		sleep(int(time*1000));
 		fuel -= (1.0 - engineEfficiency) * speed * time;
 		return fuel > 0;
 	}
@@ -108,129 +114,207 @@ class Station
 {
 	Station(string &in _name, dictionary@ _tracks)
 	{
-		name   @= _name;
-		tracks @= _tracks;
+		name    = _name;
+		@tracks = _tracks;
 	
 		if(allStations.exists(name))
 			Println("duplicate station exists: ", name);
 			
-		allStations[name] = this;
+		@allStations[name] = this;
 	}
 	
 	//test loading handles
-	string 	   name;
-	dictionary tracks;
+	string	    name;
+	dictionary@ tracks;
 	
 	float GetDistanceTo(Station@ to)
 	{
-		float length = 0;
+		float length = -1;
 		if(tracks.exists(to.name))
 			tracks.get(to.name, length);
 		
 		return length;
 	}
 	
-	int PrintRoutes()
+	void PrintRoutes()
 	{
-		string[] keys @= tracks.getKeys();
+		string[]@ keys = tracks.getKeys();
 		
 		for(uint j = 0; j < keys.size(); ++j)
 		{
 			float length = 0;
-			tracks.get(keys[i], length);
-			Println("from ", name, " station to ", keys[i], "station; takes ", length , " seconds");
+			tracks.get(keys[j], length);
+			Println("from ", name, " station to ", keys[j], " station; takes ", length , " seconds");
 		}
 	}
 };
 
+void PrintStations()
+{
+	string[]@ keys = allStations.getKeys();
+	
+	for(uint j = 0; j < keys.size(); ++j)
+	{
+		Station@ station = null;
+		allStations.get(keys[j], @station);
+		station.PrintRoutes();
+	}
+}
 
+class TrainNode
+{
+	iTrain@ train;
+	TrainNode@  next;
+};
 
 class HomeOffice : Station
 {
-	class Node
-	{
-		Train@ train;
-		Node@  next;
-	};
-	
-	HomeOffice(string &in _name, dictionary@ _tracks) { Station(_name, _tracks); }
+	HomeOffice(string &in _name, dictionary@ _tracks) { super(_name, _tracks); }
 		
-	Node@ 		 list;
+	TrainNode@ 		 list;
 	weakref<Station>[][] routes;
-	Route[]		 schedule;
 	
-	void PushTrain(Train@ train)
+	void AddRoute(string[] stations)
+	{
+		weakref<Station>[] route;
+		
+		for(uint i = 0; i < stations.size(); ++i)
+		{
+			Station@ station;
+			allStations.get(stations[i], @station);
+			
+			if(station is null)
+			{
+				Println("no such station: ", stations[i]);
+			}
+			
+			route.push_back(weakref<Station>(@station));
+		}
+		
+		routes.push_back(route);	
+	}
+	
+	void PushTrain(iTrain@ train)
 	{
 		if(train is null)
 			return;
 			
-		Node@ n = Node();
+		TrainNode@ n = TrainNode();
 		
-		n.train = train;
+		@n.train = train;
 		@n.next  = list;
 		
 		@list = n;
 	}
 	
-	Train@ PopTrain()
+	iTrain@ PopTrain()
 	{
 		if(list is null)
 			return null;
 		
-		Train@ train = list.train;
+		iTrain@ train = list.train;
 		@list = list.next;
 		
 		return train;	
 	}
 	
 	
-	bool FollowRoute(dictionary@ dict)
+	void FollowRoute(dictionary@ dict)
 	{
 		int64 id; 
 		
-		if(!dict.get("id", id) || (uint)id > routes.size()) 
-			return false;
+		if(!dict.get("id", id))
+		{
+			Println("no 'id' key in dictionary");
+			return;
+		}
+		
+		if(uint(id) > routes.size()) 
+		{
+			Println("Invalid route id: ", id);
+			return;
+		}
 					
-		Train@ train = PopTrain()
-		if(train is null) return false;
+		iTrain@ train = PopTrain();
+		if(train is null) 
+		{
+			Println("Unable to fetch train");
+			return;
+		}
 		
 		train.OnStartRoute();
-		bool r = FollowRoute(@routes[id], @train);
+		bool r = FollowRouteInternal(@routes[id], @train, id);
 		train.OnEndRoute();
 		
 		PushTrain(train);
-		return r;
+		return;
 	}
 	
-	bool FollowRoute(Station[] route, Train@ train)
+private bool FollowRouteInternal(weakref<Station>[]@ route, iTrain@ train, int route_id)
 	{
 		Station@ cur = this;
+		Station@ next = null;
 		for(uint i = 0; i < route.size(); ++i)
 		{
-			Println(train.name, " arrived at ", cur.name, " station!");
+			Println(train.get_name(), " arrived at ", cur.name, " station!");
+
+			if((@next = route[i].get()) is null)
+			{
+				Println("next station missing!");
+				return false;		
+			}
 			
-			float length = cur.GetDistanceTo(routes[i]);
+			
+			float length = cur.GetDistanceTo(next);
 			
 			if(length == 0)
 			{
-				Println(" no route from ", cur.name, " station to ", routes[i].name, " station!");
+				Println("no route from ", cur.name, " station to ", next.name, " station!");
 				return false;
 			}
 			else	
 			{
 				if(!train.TravelDistance(length))
 				{
-					Println(train.name, " failed to reach ", routes[i].name, " station!");
+					Println(train.get_name(), " failed to reach ", next.name, " station!");
 					return false;
 				}
 			}
+			
+			@cur = next;
 		}
 	
 		return true;
 	}
+
+	void PrintRoutes()
+	{
+		for(uint i = 0; i < routes.size(); ++i)
+		{
+			Print("[");
+			
+			for(uint j = 0; j < routes[i].size(); ++j)
+			{
+				Print(routes[i][j].get().name, j+1 < routes[i].size()? ", " : "]\n");
+			}
+		}
+	}
 	
 };
 
+	class Leaf
+	{
+		string content;
+	};
+
+	class RingListNode
+	{
+		RingListNode() {}
+		
+		Leaf left;
+		Leaf@ right;
+	};
+	
 //test ownr load order
 class RingListBuffer
 {
@@ -238,7 +322,7 @@ class RingListBuffer
 	{
 		nodes.resize(contents.size());
 		
-		for(uint i = 0u; i < nodes.size(); ++i)
+		for(uint i = 0; i < nodes.size(); ++i)
 		{
 			nodes[i].left.content = contents[i]; 
 			@nodes[i].right 	  = nodes[(i+1) % contents.size()].left;
@@ -247,17 +331,17 @@ class RingListBuffer
 	
 	void Print()
 	{
-		Print("[ ");
+		::Print("[ ");
 		
-		for(uint i = 0u; i < nodes.size(); ++i)
+		for(uint i = 0; i < nodes.size(); ++i)
 		{
-			Print(nodes[i].left.content, i+1 == nodes.size()? "]" : ", ");		
+			::Print(nodes[i].left.content, i+1 == nodes.size()? "]\n" : ", ");		
 		}	
 	}
 	
 	bool Check()
 	{
-		for(uint i = 0u; i < nodes.size(); ++i)
+		for(uint i = 0; i < nodes.size(); ++i)
 		{
 			if(nodes[i].right !is nodes[(i+1) % nodes.size()].left)
 				return false;
@@ -266,18 +350,7 @@ class RingListBuffer
 		return true;
 	}
 
-	class Leaf
-	{
-		string content;
-	};
-
-	class Node
-	{
-		Leaf left;
-		Leaf@ right;
-	};
-	
-	Node[] nodes;
+	RingListNode[] nodes;
 }
 
 
@@ -288,33 +361,42 @@ RingListBuffer buffer({ "apple", "orange", "banana", "nectarine", "plum", "apric
 
 class Route
 {
-	float       time;
-	dictionary@ dict;
+	Route() {}
+	Route(float _t, int i) { time = _t; id = i; }
+	float   time;
+	int 	id;
 };
 
 Route[]	   schedule;
 
 void RunSchedule()
-{
-	float time; 
+{		
+	float time = 0; 
 	
 	for(uint i = 0; i < schedule.size(); ++i)
-	{
-		sleep(1000 * (schedule[i].time - time));
-		time += schedule[i].time;
+	{		
+		coroutine @co = coroutine(office.FollowRoute);
+		createCoRoutine(@co, {{"id", schedule[i].id}});
 		
-		createCoRoutine(coroutine(office.FollowRoute), schedule[i].dict);
+		
+		int sleep_time = int(schedule[i].time);
+	//	Println("sleeping for ", sleep_time, " seconds");
+		sleep(sleep_time < 0? sleep_time*1000 : 0);
+		
+		time += schedule[i].time;
 	}
 }
 
+
 void SetUp()
-{(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
-	antiqueTrain = Train("Smethwick", 7, 1779, 15, datetime(1779, 5, 0), .15);
+{
+//(string &in _name, int _passengers, int _year, float _speed, datetime &in _purchased, float efficiency)
+	@antiqueTrain = Train("Smethwick", 7, 1779, 15, datetime(1779, 5, 0));
 	
-	office = HomeOffice("london", { 
+	@office = HomeOffice("london", { 
 		{"cambridge",  5}, {"harwich",  7}, {"dover",  7}, {"brighton",  5}, {"nottingham",  13},  
 		{"portsmouth",  5}, {"exter",  10},  {"cardiff",  10},  {"birmingham",  6},
-		{"crewe",  14}, {"leeds",  14},  {"york",  14},
+		{"crewe",  14}, {"leeds",  14},  {"york",  14}
 	});
 		
 	Station("cambridge", { {"london",  5} });
@@ -331,6 +413,7 @@ void SetUp()
 	Station("crewe", { {"london",  14}, {"liverpool", 2}});
 	Station("leeds", { {"london",  14}, {"manchester", 2}, {"york", 1}});
 	Station("york", { {"london",  14}, {"leeds", 1}, {"newcastle", 3}});
+	Station("manchester", { {"birmingham", 7}, {"liverpool", 2}, {"leeds", 2}, {"newcastle", 9}, {"edinburgh", 13}, {"glasgow", 12}});
 	
 	Station("liverpool", { {"crewe",  2}, {"manchester", 2}, {"newcastle", 10}, {"edinburgh", 14}, {"glasgow", 13}});	
 	Station("newcastle", { {"york",  3}, {"edinburgh", 4}, {"glasgow", 6}, {"liverpool", 9}, {"manchester", 9} });
@@ -339,17 +422,48 @@ void SetUp()
 	
 	Station("aberdeen", { {"edinburgh",  9}, {"iverness", 14}, {"glasgow", 12}});	
 	Station("iverness", { {"edinburgh",  9}, {"aberdeen", 14}, {"glasgow", 12}});	
-	Station("fort william", {"glasgow", 6}});
+	Station("fort william", { {"glasgow", 6}});
 	
-
-
+//	PrintStations();
+	
+	office.PushTrain(ElectricTrain("Bullet1", 200, 2000, 60, datetime(2000, 5, 12), .80));
+	office.PushTrain(ElectricTrain("Bullet2", 150, 2005, 80, datetime(2005, 8, 15), .85));
+	office.PushTrain(ElectricTrain("Bullet3", 240, 2010, 90, datetime(2010, 3, 30), .90));
+	
+	office.PushTrain(DeiselTrain("Deisel1", 400, 1995, 60, datetime(1995, 4, 13), .40));
+	office.PushTrain(DeiselTrain("Deisel3", 300, 1985, 35, datetime(1989, 7, 09), .50));
+	office.PushTrain(DeiselTrain("Deisel2", 300, 1995, 45, datetime(1999, 6, 24), .60));
+	
+	office.PushTrain(ElectricTrain("Bullet1", 200, 2000, 60, datetime(2000, 5, 12), .80));
+	office.PushTrain(ElectricTrain("Bullet2", 150, 2005, 80, datetime(2005, 8, 15), .85));
+	office.PushTrain(ElectricTrain("Bullet3", 240, 2010, 90, datetime(2010, 3, 30), .90));
+	
+	office.PushTrain(DeiselTrain("Deisel1", 400, 1995, 60, datetime(1995, 4, 13), .40));
+	office.PushTrain(DeiselTrain("Deisel3", 300, 1985, 35, datetime(1989, 7, 09), .50));
+	office.PushTrain(DeiselTrain("Deisel2", 300, 1995, 45, datetime(1999, 6, 24), .60));
+	
+	office.AddRoute({"york", "newcastle", "edinburgh", "aberdeen", "glasgow", "manchester", "birmingham", "london"});
+	office.AddRoute({"portsmouth", "exter", "birmingham", "manchester", "leeds", "london"});
+	office.AddRoute({"brighton", "london", "dover", "london", "harwich", "london", "cambridge", "london"});
+	office.AddRoute({"cardiff", "birmingham", "manchester", "liverpool", "crewe", "london"});
+	office.AddRoute({"nottingham", "london", "cardiff", "london", "exter", "london"});
+	office.AddRoute({"crewe", "liverpool", "manchester", "leeds", "york", "london"});
+	office.AddRoute({"birmingham", "manchester", "glasgow", "fort william", "iverness", "edinburgh", "newcastle", "york", "leeds", "london"});
+	
+//	PrintStations();
+	
+	float time = 0;
+	for(int i = 0; i < 20; ++i)
+	{
+		time = float((rand() % 5) + 2);
+		schedule.push_back(Route(time, rand() % office.routes.size()) );
+	}
 }
 
-void Destroy()
+void OnLoad()
 {
-	@buffer = null;
-	allStations.clear();
-
-
+	buffer.Print();
+	PrintStations();
 }
+
 

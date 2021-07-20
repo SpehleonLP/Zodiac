@@ -8,6 +8,7 @@
 #include <angelscript.h>
 #endif
 
+#include <exception>
 #include <cstdio>
 #include <memory>
 
@@ -27,24 +28,66 @@ enum zZodiacProp
 
 };
 
-enum class Exception
+enum Code
 {
-	zZE_CastingException,
-	zZE_BufferOverrun,
-	zZE_BadObjectAddress,
-	zZE_BadFunctionInfo,
-	zZE_DuplicateObjectAddress,
-	zZE_ObjectRestoreTypeMismatch,
-	zZE_ObjectUnserializable,
-	zZE_BadTypeId,
-	zZE_InconsistentObjectType,
-	zZE_InconsistentObjectOwnership,
-	zZE_OwnerNotEncoded,
-	zZE_UnknownEncodingProtocol,
-	zZE_ModuleDoesNotExist,
-	zZE_DoubleLoad,
-	zZE_CantSaveContextWithoutBytecode,
-	zZE_ContextNotSuspended,
+	CastingException,
+	BufferOverrun,
+	BadObjectAddress,
+	BadFunctionInfo,
+	DuplicateObjectAddress,
+	ObjectRestoreTypeMismatch,
+	ObjectUnserializable,
+	BadTypeId,
+	InconsistentObjectType,
+	InconsistentObjectOwnership,
+	OwnerNotEncoded,
+	UnknownEncodingProtocol,
+	ModuleDoesNotExist,
+	DoubleLoad,
+	CantSaveContextWithoutBytecode,
+	ContextNotSuspended,
+	Total
+};
+
+class Exception : public std::exception
+{
+public:
+
+	const char * ToString(int code)
+	{
+		if((uint)code > Total)
+			return "";
+
+		const char * strings[] = {
+			"Casting Exception",
+			"Buffer Overrun"
+			"Bad Object Address",
+			"Bad Function Info",
+			"DuplicateObject Address",
+			"Object Restore Type Mismatch",
+			"Object Unserializable",
+			"Bad Type Id",
+			"Inconsistent Object Type",
+			"Inconsistent Object Ownership",
+			"Owner Not Encoded",
+			"Unknown Encoding Protocol",
+			"Module Does Not Exist",
+			"Double Load",
+			"Cant Save Context Without Bytecode",
+			"Context Not Suspended",
+		};
+
+		return strings[code];
+	}
+
+
+	Exception(Code code) :	text(ToString(code)) { }
+	Exception(std::string const& text, Code code) :	text(ToString(code) + (": " + text)) { }
+	const char * what() const noexcept { return text.c_str(); }
+
+private:
+	std::string text;
+
 };
 
 enum Flags
@@ -67,15 +110,15 @@ typedef void (*zWRITER_FUNC_t)(zIZodiacWriter *, void*);
 void ZodiacLoad(zIZodiacReader *, std::nullptr_t*, int &);
 void ZodiacSave(zIZodiacWriter *, std::nullptr_t*, int &);
 
-zIZodiac * zCreateZodiac(asIScriptEngine * engine);
+std::unique_ptr<zIZodiac> zCreateZodiac(asIScriptEngine * engine);
 
 typedef void (*zSAVE_FUNC_t)(zIZodiacWriter *, void const*, int &);
 typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int &);
 
 
-#define ZODIAC_GETSAVEFUNC(T) reinterpret_cast<zSAVE_FUNC_t>(static_cast<void (*)(zIZodiacWriter *, T const*, int &)>(ZodiacSave))
-#define ZODIAC_GETLOADFUNC_R(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T**, int &)>(ZodiacLoad))
-#define ZODIAC_GETLOADFUNC_V(T) reinterpret_cast<zLOAD_FUNC_t>(static_cast<void (*)(zIZodiacReader *, T*, int &)>(ZodiacLoad))
+#define ZODIAC_GETSAVEFUNC(T) (static_cast<void (*)(Zodiac::zIZodiacWriter *, T const*, int &)>(ZodiacSave))
+#define ZODIAC_GETLOADFUNC_R(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T**, int &)>(ZodiacLoad))
+#define ZODIAC_GETLOADFUNC_V(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T*, int &)>(ZodiacLoad))
 
 
 class zIZodiac
@@ -113,7 +156,19 @@ public:
 	virtual int   GetZTypeIdFromAsTypeId(int asTypeId) const = 0;
 
 	//does not copy string, assumes read only memory
-	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
+	template<typename T>
+	int   RegisterValueType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T*, int &), const char * nameSpace = nullptr)
+	{
+		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace);
+	}
+
+	template<typename T>
+	int   RegisterRefType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T**, int &), const char * nameSpace = nullptr)
+	{
+		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace);
+	}
+
+
 
 /* why this not work but same idea does for nnholmon::json???
 	template<typename T>
@@ -136,18 +191,20 @@ public:
 	}
 
 private:
+	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
+
 	static int typeIdCounter;
 };
 
-#define zRegisterRefType(zodiac, T, name, nameSpace)	zodiac->RegisterTypeCallback(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace)
-#define zRegisterValueType(zodiac, T, name, nameSpace)	zodiac->RegisterTypeCallback(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace)
+#define zRegisterRefType(zodiac, T, name, nameSpace)	zodiac->RegisterRefType(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_R(T), nameSpace)
+#define zRegisterValueType(zodiac, T, name, nameSpace)	zodiac->RegisterValueType(zIZodiac::GetTypeId<T>(), sizeof(T), name, ZODIAC_GETSAVEFUNC(T), ZODIAC_GETLOADFUNC_V(T), nameSpace)
 
 
 
 template<> inline int zIZodiac::GetTypeId<std::nullptr_t>() { return 0; }
 
-extern zIFileDescriptor * FromCFile(FILE *);
-extern zIFileDescriptor * FromCFile(FILE **);
+extern std::unique_ptr<zIFileDescriptor> FromCFile(FILE *);
+extern std::unique_ptr<zIFileDescriptor> FromCFile(FILE **);
 
 class zIFileDescriptor : public asIBinaryStream
 {
@@ -207,10 +264,13 @@ public:
 	virtual asIScriptEngine * GetEngine() const = 0;
 
 	template<typename U, typename... Args>
-	U * LoadObject(uint id);
+	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &));
 
-	virtual std::unique_ptr<void> LoadScriptObject(int address, uint asTypeId) = 0;
-	inline  std::unique_ptr<void> LoadScriptObject(int address, asITypeInfo * typeInfo) { return LoadScriptObject(address, typeInfo? typeInfo->GetTypeId() : 0); }
+	template<typename U>
+	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &));
+
+	template<typename U, typename... Args>
+	void LoadValuebject(uint id, U * ptr, void (*)(zIZodiacReader *, U *, int &));
 
 	virtual void LoadScriptObject(void *, int address, uint asTypeId) = 0;
 	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0); }
@@ -236,6 +296,7 @@ private:
 	U * CastObject(void * ptr, uint typeId);
 
 	virtual void * LoadObject(int id, zLOAD_FUNC_t, int & actualType) = 0;
+	virtual void LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType) = 0;
 };
 
 class zIZodiacWriter
@@ -245,6 +306,7 @@ public:
 
 	virtual zIFileDescriptor * GetFile() const = 0;
 	virtual asIScriptEngine * GetEngine() const = 0;
+	virtual bool SaveByteCode() const = 0;
 
 	virtual int SaveString(const char *) = 0;
 	inline  int SaveTypeInfo(asITypeInfo const* id) { return id == 0? 0 : SaveTypeId(id->GetTypeId()); }
@@ -258,7 +320,7 @@ public:
 // ownr indicates the object that owns (allocated memory for) the object being written.
 // if the typeId isn't a handle type it is ignored.
 	template<typename T>
-	inline int SaveObject(T const* t) {	return SaveObject(t, zIZodiac::GetTypeId<T>(), ZODIAC_GETSAVEFUNC(T)); }
+	inline int SaveObject(T const* t, void (save)(zIZodiacWriter *, T const*, int &)) {	return SaveObject(t, zIZodiac::GetTypeId<T>(), reinterpret_cast<zSAVE_FUNC_t>(save)); }
 
 protected:
 	virtual int  SaveObject(void const* ptr, int zTypeId, zSAVE_FUNC_t) = 0;
@@ -267,7 +329,7 @@ protected:
 template<typename U>
 inline U * zIZodiacReader::CastObject(void * ptr, uint typeId)
 {
-	if(typeId != zIZodiac::GetTypeId<U>()) throw Exception::zZE_CastingException;
+	if(typeId != zIZodiac::GetTypeId<U>()) throw Exception(CastingException);
 	return (U*)ptr;
 }
 
@@ -287,15 +349,38 @@ inline U * zIZodiacReader::CastObject(void * ptr, uint typeId)
 
 
 template<typename T, typename... Args>
-inline T * zIZodiacReader::LoadObject(uint id)
+T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &))
 {
-	int actualType{};
-	void * ptr = LoadObject(id, ZODIAC_GETLOADFUNC_R(T), actualType);
+	int actualType{zIZodiac::GetTypeId<T>()};
+	void * ptr = LoadObject(id, (zLOAD_FUNC_t)load_func, actualType);
 
 	if(ptr != nullptr)
 		return CastObject<T, Args...>(ptr, actualType);
 
 	return nullptr;
+
+}
+
+template<typename T>
+T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &))
+{
+	int actualType{zIZodiac::GetTypeId<T>()};
+	void * ptr = LoadObject(id, (zLOAD_FUNC_t)load_func, actualType);
+
+	if(actualType != zIZodiac::GetTypeId<T>())
+		throw Exception(CastingException);
+
+	return (T*)ptr;
+}
+
+template<typename U, typename... Args>
+void zIZodiacReader::LoadValuebject(uint id, U * ptr, void (save_func)(zIZodiacReader *, U *, int &))
+{
+	int actualType{zIZodiac::GetTypeId<U>()};
+	LoadObject(id, ptr, (zLOAD_FUNC_t)save_func, actualType);
+
+	if(actualType != zIZodiac::GetTypeId<U>())
+		throw Exception(CastingException);
 }
 
 

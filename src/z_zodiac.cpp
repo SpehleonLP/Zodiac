@@ -11,9 +11,9 @@ namespace Zodiac
 
 int zIZodiac::typeIdCounter{1};
 
-zIZodiac * zCreateZodiac(asIScriptEngine * engine)
+std::unique_ptr<zIZodiac> zCreateZodiac(asIScriptEngine * engine)
 {
-	return new zCZodiac(engine);
+	return std::unique_ptr<zIZodiac>(new zCZodiac(engine));
 }
 
 zCZodiac::zCZodiac(asIScriptEngine * engine) :
@@ -143,8 +143,10 @@ int  zCZodiac::GetZTypeIdFromAsTypeId(int asTypeId) const
 	return -1;
 }
 
-zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId)
+zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId) const
 {
+	asTypeId &= ~asTYPEID_OBJHANDLE;
+
 	for(auto & c : m_typeList)
 	{
 		if(c.asTypeId == asTypeId)
@@ -154,7 +156,7 @@ zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId)
 	return nullptr;
 }
 
-zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromZTypeId(int zTypeId)
+zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromZTypeId(int zTypeId) const
 {
 	for(auto & c : m_typeList)
 	{

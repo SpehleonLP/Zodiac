@@ -258,12 +258,11 @@ const char * zCZodiacReader::LoadModules(asIScriptEngine * engine)
 //load modules
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
-		bool created = false;
+//		bool created = false;
 		asIScriptModule * module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
 
 		if(!module && m_modules[i].byteCodeLength != 0)
 		{
-			created = true;
 			module = engine->GetModule(LoadString(m_modules[i].name), asGM_ALWAYS_CREATE);
 
 			zIFileDescriptor::ReadSubFile sub_file(m_file, m_modules[i].byteCodeOffset, m_modules[i].byteCodeLength);
@@ -487,7 +486,7 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, uint asTypeId)
 	auto entry = m_parent->GetTypeEntryFromAsTypeId(asTypeId);
 
 	if(!entry)
-		throw Exception::zZE_UnknownEncodingProtocol;
+		throw Exception(UnknownEncodingProtocol);
 
 	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
 
@@ -516,7 +515,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 {
 //object address 0 is nullptr so negative values aren't considered
 	if((uint32_t)address >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 //if the owner is non-zero restore the owner
 	if(m_entries[address].owner)
@@ -544,7 +543,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 		engine->RefCastObject(m_loadedObjects[address].ptr, engine->GetTypeInfoById(loaded.asTypeId), engine->GetTypeInfoById(asTypeId), (void**)dst);
 
 		if(*(void**)dst == nullptr)
-			throw Exception::zZE_ObjectRestoreTypeMismatch;
+			throw Exception(ObjectRestoreTypeMismatch);
 
 		return;
 	}
@@ -588,7 +587,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 		GetEngine()->RefCastObject(m_loadedObjects[address].ptr, _typeInfo, typeInfo, (void**)dst);
 
 		if(*(void**)dst == nullptr)
-			throw Exception::zZE_ObjectRestoreTypeMismatch;
+			throw Exception(ObjectRestoreTypeMismatch);
 
 		m_loadedObjects[address].needRelease = 1;
 //dereference to set up script object...
@@ -626,7 +625,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 		{
 			if(m_loadedObjects[read].ptr)
 			{
-				throw Exception::zZE_DoubleLoad;
+				throw Exception(DoubleLoad);
 			}
 
 			m_loadedObjects[read].ptr	   = offset;
@@ -661,7 +660,7 @@ bool zCZodiacReader::RestoreFunction(void ** dst, uint32_t handle, asITypeInfo *
 	if(delegate) delegate->Release();
 
 	if(delegate && !*dst)
-		throw Exception::zZE_ObjectRestoreTypeMismatch;
+		throw Exception(ObjectRestoreTypeMismatch);
 
 	return true;
 }
@@ -696,7 +695,7 @@ void zCZodiacReader::RestoreScriptObject(void * dst, void const* src, uint asTyp
 
 		auto entry = m_parent->GetTypeEntryFromAsTypeId(asTypeId);
 
-		if(!entry)	throw Exception::zZE_UnknownEncodingProtocol;
+		if(!entry)	throw Exception(UnknownEncodingProtocol);
 
 		if(!entry->onLoad)
 		{
@@ -714,7 +713,7 @@ asITypeInfo * zCZodiacReader::LoadTypeInfo(int id, bool RefCount)
 	if(id < 0) return nullptr;
 
 	if((uint)id > typeInfoLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 	auto typeId = m_asTypeIdFromStored[id];
 	auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
@@ -730,7 +729,7 @@ int zCZodiacReader::LoadTypeId(int id)
 	if(id < 0) return asTYPEID_VOID;
 
 	if((uint)id > typeInfoLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 	return m_asTypeIdFromStored[id];
 }
@@ -740,7 +739,7 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 {
 	if(id < 0) return nullptr;
 	if((uint)id > functionTableLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 	if(m_loadedFunctions == nullptr)
 	{
@@ -769,7 +768,7 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 		auto module = GetEngine()->GetModule(LoadString(m_functions[id].module), asGM_ONLY_IF_EXISTS);
 
 		if(!module)
-			throw Exception::zZE_ModuleDoesNotExist;
+			throw Exception(ModuleDoesNotExist);
 
 		func = module->GetFunctionByDecl(LoadString(m_functions[id].declaration));
 	}
@@ -779,7 +778,7 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 	}
 
 	if(func == nullptr)
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 //is it a delegate?
 	if(!m_functions[id].delegateAddress)
@@ -791,7 +790,7 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 		asIScriptFunction * delegate = GetEngine()->CreateDelegate(func, delegateObject);
 
 		if(!delegate)
-			throw Exception::zZE_BadFunctionInfo;
+			throw Exception(BadFunctionInfo);
 	}
 
 	m_loadedFunctions[id] = func;
@@ -806,28 +805,29 @@ asIScriptContext * zCZodiacReader::LoadContext(int id)
 		return nullptr;
 //object address 0 is nullptr so negative values aren't considered
 	if((uint32_t)id >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 	if(m_loadedObjects[id].ptr != nullptr)
 	{
 		if(m_loadedObjects[id].zTypeId != zIZodiac::GetTypeId<asIScriptContext>())
-			throw Exception::zZE_ObjectRestoreTypeMismatch;
+			throw Exception(ObjectRestoreTypeMismatch);
 
 		asIScriptContext * context = reinterpret_cast<asIScriptContext*>(m_loadedObjects[id].ptr);
 		context->AddRef();
 		return context;
 	}
 
-	asIScriptContext * context = GetEngine()->CreateContext();
-	m_loadedObjects[id].ptr = context;
-	m_loadedObjects[id].zTypeId = zIZodiac::GetTypeId<asIScriptContext>();
+	asIScriptContext * context{};
 
 	zCEntry const* entry = &m_entries[id];
 	zIFileDescriptor::ReadSubFile sub_file(m_file, entry->offset, entry->byteLength);
 
 	int real_type{};
-	ZodiacLoad(this, context, real_type);
+	ZodiacLoad(this, &context, real_type);
 	++m_progress;
+
+	m_loadedObjects[id].ptr = context;
+	m_loadedObjects[id].zTypeId = zIZodiac::GetTypeId<asIScriptContext>();
 
 	return context;
 }
@@ -838,7 +838,7 @@ void * zCZodiacReader::LoadObject(int id, zLOAD_FUNC_t load_func, int & actualTy
 		return nullptr;
 //object address 0 is nullptr so negative values aren't considered
 	if((uint32_t)id >= addressTableLength())
-		throw Exception::zZE_BadObjectAddress;
+		throw Exception(BadObjectAddress);
 
 	if(m_loadedObjects[id].ptr == nullptr && m_loadedObjects[id].zTypeId == 0)
 	{
@@ -858,6 +858,18 @@ void * zCZodiacReader::LoadObject(int id, zLOAD_FUNC_t load_func, int & actualTy
 
 	actualType = m_loadedObjects[id].zTypeId;
 	return m_loadedObjects[id].ptr;
+}
+
+void	 zCZodiacReader::LoadObject(int id, void * dst, zLOAD_FUNC_t load_func, int & actualType)
+{
+//object address 0 is nullptr so negative values aren't considered
+	if(id == 0 || (uint32_t)id >= addressTableLength())
+		throw Exception(BadObjectAddress);
+
+	zCEntry const* entry = &m_entries[id];
+	zIFileDescriptor::ReadSubFile sub_file(m_file, entry->offset, entry->byteLength);
+
+	load_func(this, dst, actualType);
 }
 
 template<typename T>

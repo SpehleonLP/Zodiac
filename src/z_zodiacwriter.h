@@ -36,6 +36,7 @@ public:
 
 	zIFileDescriptor * GetFile() const override { return m_file; }
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); };
+	bool SaveByteCode() const override { return m_parent->GetProperty(zZP_SAVE_BYTECODE); }
 
 	int SaveString(const char *) override;
 	int SaveTypeId(int id) override;

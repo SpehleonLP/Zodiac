@@ -43,8 +43,8 @@ struct TypeEntry;
 	int   GetAsTypeIdFromZTypeId(int zTypeId) const override;
 	int   GetZTypeIdFromAsTypeId(int asTypeId) const override;
 
-	TypeEntry const* GetTypeEntryFromAsTypeId(int asTypeId);
-	TypeEntry const* GetTypeEntryFromZTypeId(int zTypeId);
+	TypeEntry const* GetTypeEntryFromAsTypeId(int asTypeId) const;
+	TypeEntry const* GetTypeEntryFromZTypeId(int zTypeId) const;
 
 
 private:

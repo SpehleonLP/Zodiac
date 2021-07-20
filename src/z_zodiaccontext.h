@@ -6,7 +6,7 @@
 namespace Zodiac
 {
 void ZodiacSave(zIZodiacWriter*, asIScriptContext const*, int&);
-void ZodiacLoad(zIZodiacReader*, asIScriptContext*, int&);
+void ZodiacLoad(zIZodiacReader*, asIScriptContext **, int&);
 }
 
 

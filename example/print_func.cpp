@@ -1,6 +1,7 @@
 #include "print_func.h"
 #include <string>
 #include "add_on/scriptarray/scriptarray.h"
+#include <cstring>
 #include <angelscript.h>
 #include <cinttypes>
 #include <cassert>
@@ -55,7 +56,6 @@ static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
 	auto engine = ctx->GetEngine();
 
 	int stringTypeId = engine->GetStringFactoryReturnTypeId();
-	int arrayTypeId  = engine->GetDefaultArrayTypeId();
 
 	if(stringTypeId == typeId)
 	{
@@ -63,9 +63,16 @@ static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
 		return;
 	}
 
-	if(depth < 2 && arrayTypeId == (typeId & ~asTYPEID_OBJHANDLE))
+	auto typeInfo = engine->GetTypeInfoById(typeId);
+
+	if(depth < 2 && strcmp(typeInfo->GetName(), "array") == 0)
 	{
-		auto array = *reinterpret_cast<CScriptArray * const*>(objPtr);
+		CScriptArray const* array{};
+
+		if(typeId & asTYPEID_OBJHANDLE)
+			array = *reinterpret_cast<CScriptArray * const*>(objPtr);
+		else
+			array = reinterpret_cast<CScriptArray const*>(objPtr);
 
 		fprintf(file, "[");
 
@@ -78,7 +85,6 @@ static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
 		return;
 	}
 
-	auto typeInfo = engine->GetTypeInfoById(typeId);
 
 	if(typeInfo)
 	{

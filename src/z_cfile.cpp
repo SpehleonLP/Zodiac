@@ -6,19 +6,22 @@
 namespace Zodiac
 {
 
-zIFileDescriptor * FromCFile(FILE * fp)
+std::unique_ptr<zIFileDescriptor> FromCFile(FILE * fp) { return zCFile::Factory(fp); }
+std::unique_ptr<zIFileDescriptor> FromCFile(FILE ** _it_) { return zCFile::Factory(_it_); }
+
+std::unique_ptr<zIFileDescriptor> zCFile::Factory(FILE * fp)
 {
 	if(fp == nullptr) return nullptr;
-	return new zCFile(fp, false);
+	return std::unique_ptr<zIFileDescriptor>(new zCFile(fp, false));
 }
 
-zIFileDescriptor * FromCFile(FILE ** _it_)
+std::unique_ptr<zIFileDescriptor> zCFile::Factory(FILE ** _it_)
 {
 	FILE * fp = *_it_;
 	*_it_ = nullptr;
 
 	if(fp == nullptr) return nullptr;
-	return new zCFile(fp, true);
+	return std::unique_ptr<zIFileDescriptor>(new zCFile(fp, true));
 }
 
 zCFile::zCFile(FILE* file, bool ownsFile) :

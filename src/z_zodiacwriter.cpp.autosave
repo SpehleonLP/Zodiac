@@ -605,7 +605,6 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 			return i;
 	}
 
-	auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
 	throw Exception(BadTypeId);
 	return -1;
 }

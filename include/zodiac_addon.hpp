@@ -7,7 +7,7 @@
 #include "zodiac.h"
 #endif
 
-#if 0
+#if 1
 #include "add_on/scriptstdstring/scriptstdstring.h"
 #include "add_on/contextmgr/contextmgr.h"
 #include "add_on/scriptfile/scriptfile.h"
@@ -25,7 +25,7 @@
 namespace Zodiac
 {
 #ifdef CONTEXTMGR_H
-	void ZodiacSave(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int&)
+	void ZodiacSaveContextManager(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int&)
 	{
 		uint32_t time{};
 		if(mgr->m_getTimeFunc)
@@ -62,7 +62,7 @@ namespace Zodiac
 		}
 	}
 
-	void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&)
+	void ZodiacLoadContextManager(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&)
 	{
 		uint32_t time{};
 		if(mgr->m_getTimeFunc)
@@ -112,7 +112,7 @@ namespace Zodiac
 #ifdef SCRIPTFILE_H
 	inline void ZodiacSave(Zodiac::zIZodiacWriter *, CScriptFile const*, int&)
 	{
-		throw Exception::zZE_ObjectUnserializable;
+		throw Exception(ObjectUnserializable);
 	}
 
 	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&)
@@ -429,13 +429,16 @@ namespace Zodiac
 		int typeId{};
 		int objectId{};
 
-		if(handle->m_weakRefFlag && handle->m_ref)
+		auto object = handle->Get();
+
+		if(object)
 		{
-			if(!handle->m_weakRefFlag->Get())
-			{
-				typeId = writer->SaveTypeInfo(handle->m_type);
-				typeId = writer->SaveScriptObject(handle->m_ref, handle->m_type->GetTypeId(), nullptr);
-			}
+			auto typeInfo = handle->GetRefType();
+
+			typeId = writer->SaveTypeInfo(typeInfo);
+			typeId = writer->SaveScriptObject(object, typeInfo, nullptr);
+
+			writer->GetEngine()->ReleaseScriptObject(object, typeInfo);
 		}
 
 		file->Write(&typeId);
@@ -500,6 +503,7 @@ namespace Zodiac
 
 #ifdef SCRIPTWEAKREF_H
 		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptWeakRef, "weakref", nullptr);
+		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptWeakRef, "const_weakref", nullptr);
 #endif
 
 	}
