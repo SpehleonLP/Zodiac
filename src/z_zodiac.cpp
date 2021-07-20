@@ -147,6 +147,22 @@ zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId) cons
 {
 	asTypeId &= ~asTYPEID_OBJHANDLE;
 
+	if(asTypeId & asTYPEID_TEMPLATE)
+	{
+		auto typeInfo = m_engine->GetTypeInfoById(asTypeId);
+
+		if(typeInfo == nullptr)
+			return nullptr;
+
+		for(auto & c : m_typeList)
+		{
+			if(strcmp(typeInfo->GetName(), c.name) == 0)
+				return &c;
+		}
+
+		return nullptr;
+	}
+
 	for(auto & c : m_typeList)
 	{
 		if(c.asTypeId == asTypeId)

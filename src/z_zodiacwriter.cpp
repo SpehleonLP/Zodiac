@@ -117,6 +117,8 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 	if(WriteDelegate(ref, asTypeId))
 		return;
 
+	auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
+
 	if(asTypeId & asTYPEID_SCRIPTOBJECT )
 	{
 		asIScriptObject *obj = (asIScriptObject *)ref;
@@ -146,12 +148,10 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 				if(WriteDelegate(address, childId))
 					continue;
 
-				auto typeId = GetEngine()->GetTypeInfoById(childId);
 				auto entry = m_parent->GetTypeEntryFromAsTypeId(childId);
 
 				if(!entry)
 				{
-					auto entry = m_parent->GetTypeEntryFromAsTypeId(childId);
 					throw Exception(UnknownEncodingProtocol);
 				}
 
@@ -599,13 +599,33 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 	if(typeId <= asTYPEID_DOUBLE)
 		return typeId;
 
+	if(asTYPEID_TEMPLATE & typeId)
+	{
+		auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
+		if(typeInfo == nullptr) throw Exception(BadTypeId);
+		auto name = typeInfo->GetName();
+
+		for(uint32_t i = asTYPEID_DOUBLE+1; i < m_typeList.size(); ++i)
+		{
+			if(!(m_typeList[i] & asTYPEID_TEMPLATE))
+				continue;
+
+			typeInfo = GetEngine()->GetTypeInfoById(m_typeList[i]);
+
+			if(typeInfo && strcmp(typeInfo->GetName(), name) == 0)
+				return i;
+		}
+
+		throw Exception(BadTypeId);
+		return -1;
+	}
+
 	for(uint32_t i = asTYPEID_DOUBLE+1; i < m_typeList.size(); ++i)
 	{
 		if(m_typeList[i] ==  typeId)
 			return i;
 	}
 
-	auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
 	throw Exception(BadTypeId);
 	return -1;
 }

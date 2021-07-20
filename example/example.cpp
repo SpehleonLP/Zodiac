@@ -73,17 +73,15 @@ void MessageCallback(const asSMessageInfo *msg, void *)
 
 struct SaveData
 {
-	CContextMgr * mgr;
-	uint32_t mgrId;
+	CContextMgr * mgr{};
+	uint32_t mgrId{};
 };
 
 void WriteSaveDataFunc(Zodiac::zIZodiacWriter * writer, void* ptr)
 {
 	auto save = (SaveData*)ptr;
-	auto file = writer->GetFile();
-	file->Write(&save->mgrId);
-
-	writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
+	save->mgrId = writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
+	writer->GetFile()->Write(&save->mgrId);
 }
 
 
@@ -172,7 +170,7 @@ std::unique_ptr<Zodiac::zIZodiac> CreateZodiac(asIScriptEngine * engine, SaveDat
 {
 	auto zodiac = Zodiac::zCreateZodiac(engine);
 
-	zodiac->SetUserData(&save_data);
+	zodiac->SetUserData(save_data);
 	zodiac->SetReadSaveDataCallback(ReadSaveDataFunc);
 	zodiac->SetWriteSaveDataCallback(WriteSaveDataFunc);
 
