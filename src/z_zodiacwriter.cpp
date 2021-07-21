@@ -157,13 +157,38 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 //does this undo casting?
 		asTypeId = obj->GetTypeId();
 
+		auto typeInfo = SaveTypeId(asTypeId);
+
+		auto pBegin = &m_propertiesList[m_typeInfo[typeInfo].propertiesBegin];
+		auto pEnd   = pBegin + m_typeInfo[typeInfo].propertiesLength;
+		bool isPropertiesSet = m_typeInfo[typeInfo].isPropertiesSet;
+		m_typeInfo[typeInfo].isPropertiesSet = true;
+
+		auto begin = m_file->tell();
+
 		// Store children
 		for( asUINT i = 0; i < type->GetPropertyCount(); i++ )
 		{
 			int childId;
 			const char *childName;
-			type->GetProperty(i, &childName, &childId);
+			int offset;
+			type->GetProperty(i, &childName, &childId, nullptr, nullptr, &offset);
 			auto address = obj->GetAddressOfProperty(i);
+
+			zCProperty * prevProp{};
+
+			if(!isPropertiesSet)
+			{
+				for(auto p = pBegin; p != pEnd; ++p)
+				{
+					if(strcmp(childName, &stringContents[p->name]) == 0)
+					{
+						prevProp = p;
+						assert((uint32_t)SaveTypeId(childId) == p->typeId);
+						p->offset	  =  (m_file->tell() - begin);
+					}
+				}
+			}
 
 			if(childId <= asTYPEID_DOUBLE)
 			{
@@ -202,6 +227,11 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 					int id_no = EnqueueNode(node);
 					m_file->Write(&id_no, sizeof(uint32_t));
 				}
+			}
+
+			if(prevProp)
+			{
+				prevProp->byteLength =  (m_file->tell() - begin) - prevProp->offset;
 			}
 		}
 	}
@@ -332,6 +362,12 @@ void zCZodiacWriter::SaveModules(asIScriptEngine * engine, bool saveByteCode, bo
 	std::vector<zCModule> modules(engine->GetModuleCount()+1);
 	memset(&modules.back(), 0, sizeof(modules[0]));
 
+	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
+	{
+		auto module = engine->GetModuleByIndex(i);
+		modules[i].name = SaveString(module->GetName());
+	}
+
 	WriteByteCode(engine, modules, saveByteCode, stripDebugInfo);
 	WriteTypeInfo(engine, modules);
 
@@ -342,6 +378,13 @@ void zCZodiacWriter::SaveModules(asIScriptEngine * engine, bool saveByteCode, bo
 	m_header.moduleDataOffset = m_file->tell();
 	m_file->Write(modules.data(), modules.size());
 	m_header.moduleDataLength = (m_file->tell() - m_header.moduleDataOffset) / sizeof(zCModule);
+}
+
+void zCZodiacWriter::WriteProperties()
+{
+	m_header.propertiesOffset = m_file->tell();
+	m_file->Write(m_propertiesList.data(), m_propertiesList.size());
+	m_header.propertiesLength = (m_file->tell() - m_header.propertiesOffset) / sizeof(zCProperty);
 }
 
 uint32_t zCZodiacWriter::CountTypes(asIScriptEngine * engine)
@@ -385,15 +428,8 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 	}
 
 	m_header.propertiesOffset = m_file->tell();
-	auto buffer = WriteProperties(engine, modules);
+	m_typeInfo = WriteProperties(engine, modules);
 	m_header.propertiesLength = (m_file->tell() - m_header.propertiesOffset) / sizeof(zCProperty);
-
-	size_t begin = 0;
-	for(uint32_t i = 0; i < buffer.size(); ++i)
-	{
-		buffer[i].propertiesBegin = begin;
-		begin += buffer[i].propertiesLength;
-	}
 
 	for(uint32_t i = 0; i < modules.size(); ++i)
 	{
@@ -401,7 +437,7 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 	}
 
 	m_header.typeInfoOffset = m_file->tell();
-	m_file->Write(buffer.data(), buffer.size());
+	m_file->Write(m_typeInfo.data(), m_typeInfo.size());
 	m_header.typeInfoLength = (m_file->tell() - m_header.typeInfoOffset) / sizeof(zCTypeInfo);
 }
 
@@ -415,21 +451,8 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 	memset(&info, 0, sizeof(info));
 	for(uint32_t i = 0; i <= asTYPEID_DOUBLE; ++i)
 	{
+		info.typeId = i;
 		buffer.push_back(info);
-	}
-
-	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
-	{
-		modules[i].beginTypeInfo = buffer.size();
-
-		auto mod = engine->GetModuleByIndex(i);
-
-		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
-		{
-			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
-		}
-
-		modules[i].typeInfoLength = buffer.size();
 	}
 
 	modules.back().beginTypeInfo = buffer.size();
@@ -446,6 +469,26 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 
 	modules.back().typeInfoLength = buffer.size();
 
+	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
+	{
+		modules[i].beginTypeInfo = buffer.size();
+
+		auto mod = engine->GetModuleByIndex(i);
+
+		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
+		{
+			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
+		}
+
+		modules[i].typeInfoLength = buffer.size();
+	}
+
+#ifndef NDEBUG
+	assert(buffer.size() == m_typeList.size());
+	for(uint32_t i = 0; i < m_typeInfo.size(); ++i)
+		assert(buffer[i].typeId == (uint32_t)m_typeList[i]);
+#endif
+
 	return buffer;
 }
 
@@ -460,7 +503,8 @@ zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModu
 	info.typeId    = type->GetTypeId();
 	info.isFuncDef = func != nullptr;
 	info.isRegistered = registered;
-	info.propertiesBegin = m_file->tell();
+	info.isPropertiesSet = 0;
+	info.propertiesBegin = m_propertiesList.size();
 
 	assert(strcmp(&stringContents[info.name], type->GetName()) == 0);
 
@@ -477,14 +521,14 @@ zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModu
 
 			buffer.name = SaveString(name);
 			buffer.typeId = SaveTypeId(typeId);
-			buffer.offset = offset;
+			buffer.offset = 0;
 			buffer.byteLength = GetByteLengthOfType(engine, module, typeId);
 
-			m_file->Write(&buffer);
+			m_propertiesList.push_back(buffer);
 		}
 	}
 
-	info.propertiesLength   = (m_file->tell() - info.propertiesBegin) / sizeof(zCProperty);
+	info.propertiesLength  = m_propertiesList.size() - info.propertiesBegin;
 
 	return info;
 }
@@ -705,8 +749,20 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 
 	for(uint32_t i = asTYPEID_DOUBLE+1; i < m_typeList.size(); ++i)
 	{
-		if(m_typeList[i] ==  typeId)
+		if(m_typeList[i] == typeId)
+		{
+#ifndef NDEBUG
+			if(m_typeInfo.size())
+			{
+				assert(m_typeInfo[i].typeId == (uint32_t)typeId);
+				auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
+				auto _name = &stringContents[m_typeInfo[i].name];
+				assert(typeInfo && strcmp(_name, typeInfo->GetName()) == 0);
+			}
+#endif
 			return i;
+
+		}
 	}
 
 	throw Exception(BadTypeId);

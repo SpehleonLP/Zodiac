@@ -23,6 +23,7 @@ public:
 
 	void ProcessQueue();
 
+	void WriteProperties();
 	void WriteFunctionTable();
 	void WriteAddressTable();
 	void WriteStringTable();
@@ -82,8 +83,10 @@ typedef std::pair<void const*, int> VoidIntPair;
 	std::vector<zCEntry>		m_addressTable{0};
 	std::vector<VoidIntPair>	m_addressIndex{{0,0}};
 	std::vector<int>			m_typeList;
-	std::vector<zCModule>		m_moduleList;
 	std::vector<zCFunction>		m_functionList;
+	std::vector<zCProperty>     m_propertiesList;
+	std::vector<zCTypeInfo>     m_typeInfo;
+
 
 	std::vector<uint32_t> stringAddress{0};
 	std::vector<char>     stringContents{0};

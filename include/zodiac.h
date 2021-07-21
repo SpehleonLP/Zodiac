@@ -327,7 +327,7 @@ public:
 	virtual bool SaveByteCode() const = 0;
 
 	virtual int SaveString(const char *) = 0;
-	inline  int SaveTypeInfo(asITypeInfo const* id) { return id == 0? 0 : SaveTypeId(id->GetTypeId()); }
+	inline  int SaveTypeInfo(asITypeInfo const* typeInfo) { return typeInfo? SaveTypeId(typeInfo->GetTypeId()) : 0; }
 	virtual int SaveTypeId(int asTypeId) = 0;
 	virtual int SaveFunction(asIScriptFunction const* id) = 0;
 	virtual int SaveContext(asIScriptContext const* id) = 0;

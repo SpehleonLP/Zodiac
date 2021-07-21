@@ -50,6 +50,7 @@ struct zCTypeInfo
 	uint typeId;
 	ubyte  isFuncDef;
 	ubyte  isRegistered;
+	ubyte  isPropertiesSet;
 	uint propertiesBegin;
 	uint propertiesLength;
 };

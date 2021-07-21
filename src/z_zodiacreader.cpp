@@ -28,13 +28,14 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_typeInfo			= (zCTypeInfo const*)(m_mmap.GetAddress() + m_header->typeInfoOffset);
 	m_globals			= (zCGlobalInfo const*)(m_mmap.GetAddress() + m_header->globalsOffset);
 	m_functions			= (zCFunction const*)(m_mmap.GetAddress() + m_header->functionTableOffset);
+
+	Verify();
+
 	m_loadedObjects.reset(new LoadedInfo[addressTableLength()]);
 	memset(m_loadedObjects.get(), 0, addressTableLength() * sizeof(void*));
 
 	m_progress   = 0;
 	m_totalSteps = addressTableLength();
-
-	Verify();
 }
 
 void zCZodiacReader::Verify() const
@@ -307,11 +308,12 @@ void zCZodiacReader::LoadModules(asIScriptEngine * engine)
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
 //		bool created = false;
-		asIScriptModule * module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
+		auto moduleName = LoadString(m_modules[i].name);
+		asIScriptModule * module = engine->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
 		if(!module && m_modules[i].byteCodeLength != 0)
 		{
-			module = engine->GetModule(LoadString(m_modules[i].name), asGM_ALWAYS_CREATE);
+			module = engine->GetModule(moduleName, asGM_ALWAYS_CREATE);
 
 			zIFileDescriptor::ReadSubFile sub_file(m_file, m_modules[i].byteCodeOffset, m_modules[i].byteCodeLength);
 			module->LoadByteCode(m_file, nullptr);
@@ -352,7 +354,7 @@ void zCZodiacReader::LoadModules(asIScriptEngine * engine)
 	auto end = m_typeInfo + typeInfoLength();
 	for(auto ti = m_typeInfo; ti < end; ++ti)
 	{
-		if(ti->typeId == 0) continue;
+		if(ti->typeId <= asTYPEID_DOUBLE) continue;
 
 		auto _name = LoadString(ti->name);
 		auto _nameSpace = LoadString(ti->nameSpace);
@@ -601,7 +603,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 	}
 
 //should always be a script object by this point
-	assert(!(asTypeId & asTYPEID_SCRIPTOBJECT));
+	assert(asTypeId & asTYPEID_SCRIPTOBJECT);
 
 //---------------------------------------------------------
 // Script Object
@@ -652,7 +654,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, uint asTypeId)
 //first loop populate lookup table
 	for(auto p = begin; p < end; ++p)
 	{
-		auto typeId   = m_asTypeIdFromStored[p->readType];
+		auto typeId   = p->readType;
 		auto offset   = ref->GetAddressOfProperty(p->propertyId);
 		uint32_t read = *(uint32_t*)((uint8_t*)src + p->readOffset);
 
@@ -762,7 +764,7 @@ asITypeInfo * zCZodiacReader::LoadTypeInfo(int id, bool RefCount)
 
 int zCZodiacReader::LoadTypeId(int id)
 {
-	if(id < 0) return asTYPEID_VOID;
+	if(id <= asTYPEID_DOUBLE) return id;
 
 	if((uint)id > typeInfoLength())
 		throw Exception(BadObjectAddress);
@@ -773,9 +775,12 @@ int zCZodiacReader::LoadTypeId(int id)
 
 asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 {
-	if(id < 0) return nullptr;
+	if(id <= 0) return nullptr;
 	if((uint)id > functionTableLength())
 		throw Exception(BadObjectAddress);
+
+	auto & function = m_functions[id];
+	auto declaration = LoadString(function.declaration);
 
 	if(m_loadedFunctions == nullptr)
 	{
@@ -791,12 +796,12 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 	}
 
 	asIScriptFunction * func = nullptr;
-	asITypeInfo * typeInfo =  LoadTypeInfo(m_functions[id].objectType, false);
+	asITypeInfo * typeInfo =  LoadTypeInfo(function.objectType, false);
 
 	if(typeInfo)
 	{
 //should it be virtual???
-		func = typeInfo->GetMethodByDecl(LoadString(m_functions[id].declaration));
+		func = typeInfo->GetMethodByDecl(declaration);
 
 	}
 	else if(m_functions[id].module)
@@ -807,11 +812,11 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 		if(!module)
 			throw Exception(ModuleDoesNotExist);
 
-		func = module->GetFunctionByDecl(LoadString(m_functions[id].declaration));
+		func = module->GetFunctionByDecl(declaration);
 	}
 	else
 	{
-		func = GetEngine()->GetGlobalFunctionByDecl(LoadString(m_functions[id].declaration));
+		func = GetEngine()->GetGlobalFunctionByDecl(declaration);
 	}
 
 	if(func == nullptr)
