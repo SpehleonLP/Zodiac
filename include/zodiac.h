@@ -59,6 +59,12 @@ enum Code
 	Total
 };
 
+enum zTYPEID
+{
+	zTYPEID_OBJHANDLE = asTYPEID_OBJHANDLE|asTYPEID_HANDLETOCONST,
+	zTYPEID_OBJECT = asTYPEID_MASK_OBJECT|asTYPEID_MASK_SEQNBR
+};
+
 class Exception : public std::exception
 {
 public:
@@ -176,13 +182,13 @@ public:
 	template<typename T>
 	int   RegisterValueType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T*, int &), const char * nameSpace = nullptr)
 	{
-		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace);
+		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace, true);
 	}
 
 	template<typename T>
 	int   RegisterRefType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T**, int &), const char * nameSpace = nullptr)
 	{
-		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace);
+		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace, false);
 	}
 
 
@@ -208,7 +214,7 @@ public:
 	}
 
 private:
-	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = nullptr) = 0;
+	virtual int   RegisterTypeCallback(uint typeId, uint byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace, bool isValueType) = 0;
 
 	static int typeIdCounter;
 };
@@ -254,6 +260,7 @@ template<> inline int zIFileDescriptor::Write<void>(void const* array, int lengt
 
 struct zIFileDescriptor::ReadSubFile
 {
+	ReadSubFile() = delete;
 	ReadSubFile(zIFileDescriptor * parent, uint offset, uint length) : parent(parent) { parent->PushSubFile(offset, length); }
 	ReadSubFile(ReadSubFile const &) = delete;
 	ReadSubFile(ReadSubFile && it) : parent(it.parent) { it.parent = nullptr; }
@@ -289,11 +296,11 @@ public:
 	template<typename U, typename... Args>
 	void LoadValuebject(uint id, U * ptr, void (*)(zIZodiacReader *, U *, int &));
 
-	virtual void LoadScriptObject(void *, int address, uint asTypeId) = 0;
+	virtual void LoadScriptObject(void *, int address, int asTypeId) = 0;
 	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0); }
 
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	virtual void LoadScriptObject(void *, uint asTypeId) = 0;
+	virtual void LoadScriptObject(void *, int asTypeId) = 0;
 	inline  void LoadScriptObject(void * object, asITypeInfo * typeInfo) { LoadScriptObject(object, typeInfo? typeInfo->GetTypeId() : 0); }
 
 	virtual const char  * LoadString(int id) const = 0;

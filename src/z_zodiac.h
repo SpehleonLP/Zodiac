@@ -38,7 +38,7 @@ struct TypeEntry;
 	void SetUserData(void * d) override { m_userData = d; };
 	void * GetUserData() const override { return m_userData; };
 
-	int   RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace = "") override;
+	int   RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t, zLOAD_FUNC_t, const char * nameSpace, bool isValueType) override;
 
 	int   GetAsTypeIdFromZTypeId(int zTypeId) const override;
 	int   GetZTypeIdFromAsTypeId(int asTypeId) const override;
@@ -50,6 +50,7 @@ struct TypeEntry;
 	Code		 GetErrorCode() override { return error_code; }
 
 private:
+	zCZodiac::TypeEntry * MatchType(asITypeInfo * typeInfo, int quickCheck);
 	void SortTypeList();
 
 	ulong 		    m_options{};
@@ -86,8 +87,10 @@ private:
 struct zCZodiac::TypeEntry
 {
 	int			 asTypeId;
-	int			 byteLength;
+	bool		 isValueType : 1;
+	int			 byteLength : 31;
 	int			 zTypeId;
+	int			 subTypeId;
 	const char * name;
 	const char * nameSpace;
 	zSAVE_FUNC_t onSave;

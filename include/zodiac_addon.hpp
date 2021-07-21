@@ -19,6 +19,10 @@
 #include "add_on/weakref/weakref.h"
 #endif
 
+#ifndef NDEBUG
+#include <iostream>
+#endif
+
 #include <string>
 #include <cassert>
 #include <cstring>
@@ -35,8 +39,6 @@ namespace Zodiac
 		}
 
 		auto file = writer->GetFile();
-
-		auto spot = file->SubFileOffset();
 
 		uint32_t noThreads = mgr->m_threads.size();
 		uint32_t curThread = mgr->m_currentThread;
@@ -74,8 +76,6 @@ namespace Zodiac
 		}
 
 		auto file = reader->GetFile();
-
-		auto spot = file->SubFileOffset();
 
 		uint32_t noThreads{};
 		uint32_t curThread{};
@@ -136,12 +136,28 @@ namespace Zodiac
 	void ZodiacLoad(zIZodiacReader *, CDateTime*, int&);
 #endif*/
 
+	struct zAny
+	{
+		union
+		{
+			asINT64 valueInt;
+			double  valueFlt;
+			void   *valueObj;
+		};
+
+		int typeId;
+	};
+
 #ifdef SCRIPTANY_H
 	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptAny const* any, int&)
 	{
 		assert(any != nullptr);
 
-		CScriptAny::valueStruct value = any->value;
+		zAny value;
+
+		value.typeId = any->GetTypeId();
+		int rTypeId = value.typeId | ((value.typeId & asTYPEID_SCRIPTOBJECT)? asTYPEID_OBJHANDLE : 0);
+		any->Retrieve(&value, rTypeId);
 
 		if(value.typeId > asTYPEID_DOUBLE)
 		{
@@ -156,7 +172,7 @@ namespace Zodiac
 		assert(any != nullptr);
 		assert(*any == nullptr);
 
-		CScriptAny::valueStruct value;
+		zAny value;
 		reader->GetFile()->Read(&value);
 
 //is this okay? type punning is discouraged in C++11 for some reason??
@@ -168,9 +184,8 @@ namespace Zodiac
 		{
 			reader->LoadScriptObject(&value.valueObj, value.valueInt, value.typeId);
 
-			*any = new CScriptAny(nullptr, asTYPEID_VOID, reader->GetEngine());
-
-			((*any)->value) = value;
+			*any = new CScriptAny(reader->GetEngine());
+			(*any)->StoreMove(&value.valueObj, value.typeId, CScriptAny::MovePointer::isReference);
 		}
 	}
 #endif
@@ -184,9 +199,13 @@ namespace Zodiac
 		auto elementTypeId   = array->GetElementTypeId();
 		int arrayTypeIndex   = writer->SaveTypeInfo(array->GetArrayObjectType());
 
+		std::cerr << file->SubFileOffset() + file->tell() << std::endl;
+
 		uint32_t size = array->GetSize();
 		file->Write(&arrayTypeIndex);
 		file->Write(&size);
+
+//write
 
 		for(uint32_t i = 0; i < size; ++i)
 		{
@@ -203,6 +222,8 @@ namespace Zodiac
 		uint32_t size{};
 
 		auto file = reader->GetFile();
+
+		std::cerr << file->SubFileOffset() + file->tell() << std::endl;
 
 		file->Read(&typeId);
 		file->Read(&size);
@@ -234,7 +255,7 @@ namespace Zodiac
 	{
 		int string_id;
 		reader->GetFile()->Read(&string_id);
-		*string = reader->LoadString(string_id);
+		new(string) std::string(reader->LoadString(string_id));
 	}
 #endif
 
@@ -276,21 +297,14 @@ namespace Zodiac
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&value);
 
-		if(typeId < asTYPEID_FLOAT)
+		if(typeId <= asTYPEID_DOUBLE)
 		{
-			dict->Set(reader->GetEngine(), value);
-
-		}
-		else if(typeId <= asTYPEID_DOUBLE)
-		{
-			double dbl;
-			memcpy(&dbl, &value, sizeof(double));
-			dict->Set(reader->GetEngine(), value);
+			new(dict) CScriptDictValue(reader->GetEngine(), &value, typeId);
 		}
 		else
 		{
 			reader->LoadScriptObject(&value, value, typeId);
-			dict->DeserializePointer((void*)value, typeId);
+			new(dict) CScriptDictValue(reader->GetEngine(), &value, typeId);
 		}
 	}
 
@@ -469,7 +483,6 @@ namespace Zodiac
 	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptWeakRef* handle, int&)
 	{
 		assert(handle != nullptr);
-		assert(*handle == nullptr);
 
 		int typeId{};
 		int objectId{};

@@ -37,9 +37,9 @@ public:
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
 
-	void LoadScriptObject(void *, int address, uint asTypeId) override;
+	void LoadScriptObject(void *, int address, int asTypeId) override;
 //if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	void LoadScriptObject(void *, uint asTypeId) override;
+	void LoadScriptObject(void *, int asTypeId) override;
 
 	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringTableLength()? &m_stringTable[id] : nullptr;  }
 	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
@@ -60,7 +60,7 @@ friend class zCZodiac;
 	static void RestorePrimitive(void *, int dstTypeId, const void * address, int srcTypeId);
 //everything we can restore without updating the loading table
 	bool RestoreNoCreate(void *, uint32_t address, int asTypeId);
-	bool RestoreAppObject(void * dst, int address, uint asTypeId);
+	bool RestoreAppObject(void * dst, int address, int asTypeId);
 	void RestoreScriptObject(void * dst, const void * src, uint asTypeId);
 	bool RestoreFunction(void ** dst, uint32_t handle, asITypeInfo * typeInfo);
 
@@ -88,11 +88,11 @@ friend class zCZodiac;
 	{
 		uint32_t propertyId{~0u};
 		uint32_t readOffset;
-		uint32_t readType;
-		uint32_t writeType;
+		int readType;
+		int writeType;
 	};
 
-	std::unique_ptr<Property[]>		m_properties;
+	std::vector<Property>		m_properties;
 
 	struct LoadedInfo
 	{

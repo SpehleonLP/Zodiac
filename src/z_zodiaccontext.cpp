@@ -1,6 +1,7 @@
 #include "z_zodiaccontext.h"
 #ifdef HAVE_ZODIAC
 #include <cassert>
+#include <iostream>
 
 struct CtxCallState
 {
@@ -115,13 +116,13 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 		sf.varCount		= ctx->GetVarCount();
 
 		if(sf.callState.GetFromContext(writer, ctx, i) >= 0)
+
 			sf.isCallState = true;
 		else if(sf.state.GetFromContext(writer, ctx, i) >= 0)
 			sf.isCallState = false;
 
 		file->Write(&sf);
 	}
-
 //write current registers
 	sf.varCount = 0;
 	sf.isCallState = 2;
@@ -146,6 +147,8 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 			var.typeId = writer->SaveTypeId(typeInfo);
 			var.object = writer->SaveScriptObject(ctx->GetAddressOfVar(j, i), typeInfo);
 
+			std::cerr << "typeInfo: " << var.typeId << "\t" << typeInfo << std::endl;
+			std::cerr << "object: " << var.object << std::endl;
 			file->Write(&var);
 		}
 	}
@@ -247,7 +250,12 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			assert(var.stackLevel == i);
 			assert(var.varId == j);
 
-			zLoadVariable(reader, ctx, j, i, var.object, reader->LoadTypeId(var.typeId));
+			auto typeInfo = reader->LoadTypeId(var.typeId);
+
+			std::cerr << "typeInfo: " << var.typeId << "\t" << typeInfo << std::endl;
+			std::cerr << "object: " << var.object << std::endl;
+
+			zLoadVariable(reader, ctx, j, i, var.object, typeInfo);
 		}
 	}
 

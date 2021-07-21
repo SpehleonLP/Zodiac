@@ -28,7 +28,7 @@ int zCZodiacWriter::EnqueueNode(Node node)
 		if(node.asTypeId & asTYPEID_OBJHANDLE)
 		{
 			node.address = *(void const**)node.address;
-			node.asTypeId &= ~asTYPEID_OBJHANDLE;
+			node.asTypeId &= ~zTYPEID_OBJHANDLE;
 			node.owner = nullptr;
 		}
 
@@ -289,6 +289,12 @@ void zCZodiacWriter::ProcessQueue()
 
 	for(uint32_t i = 0; i < m_stack.size(); ++i, ++m_progress)
 	{
+		if(i == 31)
+		{
+			int break_point = 0;
+			++break_point;
+		}
+
 		buffer.offset = m_file->tell();
 		buffer.typeId = SaveTypeId(m_stack[i].asTypeId);
 		buffer.owner = 0;
@@ -459,7 +465,8 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 
 	for(uint32_t i = 0; i < engine->GetObjectTypeCount(); ++i)
 	{
-		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetObjectTypeByIndex(i), false));
+		auto typeInfo = engine->GetObjectTypeByIndex(i);
+		buffer.push_back(WriteTypeInfo(engine, nullptr, typeInfo, false));
 	}
 
 	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
@@ -721,7 +728,7 @@ uint32_t zCZodiacWriter::InsertString(const char * string)
 
 int zCZodiacWriter::SaveTypeId(int typeId)
 {
-	typeId &= ~asTYPEID_OBJHANDLE;
+	typeId &= ~zTYPEID_OBJHANDLE;
 
 	if(typeId <= asTYPEID_DOUBLE)
 		return typeId;
@@ -828,6 +835,20 @@ int zCZodiacWriter::SaveScriptObject(void const* t, uint32_t asTypeId, void cons
 {
 	if(t == nullptr)
 		return 0;
+
+	if(asTypeId & asTYPEID_APPOBJECT)
+	{
+		auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
+
+//goes in the function table
+		if(typeInfo->GetFuncdefSignature())
+		{
+			if(asTypeId & asTYPEID_OBJHANDLE)
+				return SaveFunction(*(asIScriptFunction**)t);
+			else
+				return SaveFunction((asIScriptFunction*)t);
+		}
+	}
 
 	Node node;
 

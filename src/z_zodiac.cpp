@@ -107,7 +107,7 @@ bool zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	return true;
 }
 
-int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace)
+int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace, bool isValueType)
 {
 	if(name == nullptr) name = "";
 	if(nameSpace == nullptr) nameSpace = "";
@@ -123,7 +123,9 @@ int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const
 	entry.zTypeId  = zTypeId;
 	entry.byteLength = byteLength;
 	entry.name   = name;
+	entry.isValueType = isValueType;
 	entry.nameSpace = nameSpace;
+	entry.subTypeId = 0;
 	entry.onSave = onSave;
 	entry.onLoad = onLoad;
 
@@ -157,7 +159,7 @@ int  zCZodiac::GetZTypeIdFromAsTypeId(int asTypeId) const
 
 zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromAsTypeId(int asTypeId) const
 {
-	asTypeId &= ~asTYPEID_OBJHANDLE;
+	asTypeId &= ~zTYPEID_OBJHANDLE;
 
 	if(asTypeId & asTYPEID_TEMPLATE)
 	{
@@ -195,6 +197,33 @@ zCZodiac::TypeEntry const* zCZodiac::GetTypeEntryFromZTypeId(int zTypeId) const
 	return nullptr;
 }
 
+zCZodiac::TypeEntry * zCZodiac::MatchType(asITypeInfo * typeInfo, int quickCheck)
+{
+	TypeEntry * r{};
+
+	if((uint32_t)quickCheck < m_typeList.size())
+	{
+		if(strcmp(m_typeList[quickCheck].name,	   typeInfo->GetName())      == 0
+		&& strcmp(m_typeList[quickCheck].nameSpace, typeInfo->GetNamespace()) == 0)
+		{
+			r = &m_typeList[quickCheck];
+			if(r->asTypeId == -1) return r;
+		}
+	}
+
+	for(uint32_t j = 0; j < m_typeList.size(); ++j)
+	{
+		if(strcmp(m_typeList[j].name,	   typeInfo->GetName())      == 0
+		&& strcmp(m_typeList[j].nameSpace, typeInfo->GetNamespace()) == 0)
+		{
+			r = &m_typeList[j];
+			if(r->asTypeId == -1) return r;
+		}
+	}
+
+	return r;
+}
+
 void zCZodiac::SortTypeList()
 {
 	for(auto & entry : m_typeList)
@@ -208,35 +237,19 @@ void zCZodiac::SortTypeList()
 	for(uint32_t i = 0; i < N; ++i)
 	{
 		auto typeId = m_engine->GetObjectTypeByIndex(i);
+		bool isValueType = typeId->GetFlags() & asOBJ_VALUE;
 
-	//if its already sorted try to get through it fast.
-		if(i < m_typeList.size())
+		auto entry = MatchType(typeId, i);
+
+		if(entry)
 		{
-			if(strcmp(m_typeList[i].name,	   typeId->GetName())      == 0
-			&& strcmp(m_typeList[i].nameSpace, typeId->GetNamespace()) == 0)
-			{
-				m_typeList[i].asTypeId = typeId->GetTypeId();
-				m_typeList[i].byteLength = typeId->GetSize();
-				continue;
-			}
+			entry->asTypeId   = typeId->GetTypeId();
+			entry->byteLength = typeId->GetSize();
+			entry->subTypeId  = typeId->GetSubTypeId();
+			assert(entry->isValueType == isValueType);
+			continue;
 		}
-
-		needSort = true;
-		bool found = false;
-
-		for(uint32_t j = 0; j < m_typeList.size(); ++j)
-		{
-			if(strcmp(m_typeList[j].name,	   typeId->GetName())      == 0
-			&& strcmp(m_typeList[j].nameSpace, typeId->GetNamespace()) == 0)
-			{
-				m_typeList[j].asTypeId = typeId->GetTypeId();
-				m_typeList[j].byteLength = typeId->GetSize();
-				found = true;
-				break;
-			}
-		}
-
-		if(!found)
+		else
 		{
 			if(0 == (typeId->GetFlags() & asOBJ_POD))
 			{
@@ -251,6 +264,8 @@ void zCZodiac::SortTypeList()
 			entry.byteLength = typeId->GetSize();
 			entry.name   = typeId->GetName();
 			entry.nameSpace = typeId->GetNamespace();
+			entry.isValueType = true;
+			entry.subTypeId   = 0;
 			entry.onSave = nullptr;
 			entry.onLoad = nullptr;
 
