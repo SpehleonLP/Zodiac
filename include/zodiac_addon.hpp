@@ -117,7 +117,7 @@ namespace Zodiac
 #ifdef SCRIPTFILE_H
 	inline void ZodiacSave(Zodiac::zIZodiacWriter *, CScriptFile const*, int&)
 	{
-		throw Exception(ObjectUnserializable);
+		throw zE_ObjectUnserializable;
 	}
 
 	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&)
@@ -197,19 +197,18 @@ namespace Zodiac
 
 		auto file = writer->GetFile();
 		auto elementTypeId   = array->GetElementTypeId();
-		int arrayTypeIndex   = writer->SaveTypeInfo(array->GetArrayObjectType());
-
-		std::cerr << file->SubFileOffset() + file->tell() << std::endl;
+		auto typeInfo		 = array->GetArrayObjectType();
+		int arrayTypeIndex   = writer->SaveTypeInfo(typeInfo);
 
 		uint32_t size = array->GetSize();
 		file->Write(&arrayTypeIndex);
 		file->Write(&size);
-
 //write
 
 		for(uint32_t i = 0; i < size; ++i)
 		{
-			writer->SaveScriptObject(array->At(i), elementTypeId, array);
+			int id = writer->SaveScriptObject(array->At(i), elementTypeId, array);
+			file->Write(&id);
 		}
 	}
 
@@ -223,8 +222,6 @@ namespace Zodiac
 
 		auto file = reader->GetFile();
 
-		std::cerr << file->SubFileOffset() + file->tell() << std::endl;
-
 		file->Read(&typeId);
 		file->Read(&size);
 
@@ -237,7 +234,9 @@ namespace Zodiac
 
 		for(uint32_t i = 0; i < size; ++i)
 		{
-			reader->LoadScriptObject((*array)->At(i), elementTypeId);
+			int address;
+			file->Read(&address);
+			reader->LoadScriptObject((*array)->At(i), address, elementTypeId);
 		}
 	}
 #endif
@@ -372,7 +371,8 @@ namespace Zodiac
 		{
 			for(uint32_t y = 0; y < height; ++y)
 			{
-				writer->SaveScriptObject(grid->At(x, y), elementTypeId, grid);
+				int id = writer->SaveScriptObject(grid->At(x, y), elementTypeId, grid);
+				file->Write(&id);
 			}
 		}
 	}
@@ -402,7 +402,9 @@ namespace Zodiac
 		{
 			for(uint32_t y = 0; y < height; ++y)
 			{
-				reader->LoadScriptObject((*grid)->At(x, y), elementTypeId);
+				int address;
+				file->Read(&address);
+				reader->LoadScriptObject((*grid)->At(x, y),address, elementTypeId);
 			}
 		}
 	}
@@ -444,13 +446,10 @@ namespace Zodiac
 		if(typeInfo)
 		{
 			assert(typeInfo == nullptr || typeInfo->GetTypeId() & asTYPEID_OBJHANDLE);
-			reader->LoadScriptObject(&obj, typeInfo->GetTypeId());
+			reader->LoadScriptObject(&obj, objectId, typeInfo->GetTypeId(), true);
 		}
 
 		new(handle) CScriptHandle(obj, typeInfo);
-
-		if(obj)
-			reader->GetEngine()->ReleaseScriptObject(obj, typeInfo);
 	}
 #endif
 
@@ -461,6 +460,7 @@ namespace Zodiac
 
 		auto file = writer->GetFile();
 
+		int refTypeId{};
 		int typeId{};
 		int objectId{};
 
@@ -470,12 +470,14 @@ namespace Zodiac
 		{
 			auto typeInfo = handle->GetRefType();
 
-			typeId = writer->SaveTypeInfo(typeInfo);
-			typeId = writer->SaveScriptObject(object, typeInfo, nullptr);
+			refTypeId = writer->SaveTypeInfo(handle->GetObjectType());
+			typeId    = writer->SaveTypeInfo(typeInfo);
+			objectId  = writer->SaveScriptObject(object, typeInfo, nullptr);
 
 			writer->GetEngine()->ReleaseScriptObject(object, typeInfo);
 		}
 
+		file->Write(&refTypeId);
 		file->Write(&typeId);
 		file->Write(&objectId);
 	}
@@ -484,21 +486,21 @@ namespace Zodiac
 	{
 		assert(handle != nullptr);
 
+		int refTypeId{};
 		int typeId{};
 		int objectId{};
 
+		reader->GetFile()->Read(&refTypeId);
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&objectId);
 
 		auto typeInfo = reader->LoadTypeInfo(typeId, false);
+		auto handleTypeInfo = reader->LoadTypeInfo(refTypeId, false);
 
 		void * obj{};
-		reader->LoadScriptObject(&obj, typeInfo->GetTypeId());
+		reader->LoadScriptObject(&obj, objectId, typeInfo, true);
 
-		new(handle) CScriptWeakRef(obj, typeInfo);
-
-		if(obj)
-			reader->GetEngine()->ReleaseScriptObject(obj, typeInfo);
+		new(handle) CScriptWeakRef(obj, handleTypeInfo);
 	}
 #endif
 

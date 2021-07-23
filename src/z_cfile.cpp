@@ -1,5 +1,6 @@
 #include "z_cfile.h"
 #ifdef HAVE_ZODIAC
+#include "z_zodiacexception.h"
 #include <stdexcept>
 #include <cassert>
 
@@ -120,12 +121,12 @@ void zCFile::PushSubFile(uint offset, uint byteLength)
 //need to check becuase of overflows
 	if(!(offset < byteLength && byteLength < stack[0].end))
 	{
-		throw Exception(BadSubFileAddress);
+		throw Exception(zE_BadSubFileAddress);
 	}
 
 	if(stackPos+1 >= stackSize)
 	{
-		stackSize += 4;
+		stackSize += 16;
 		stack	   = (StackFrame*)realloc(stack, sizeof(StackFrame)*stackSize);
 	}
 

@@ -3,6 +3,7 @@
 #include "zodiac.h"
 
 #include <cstdlib>
+#include <cstring>
 
 namespace Zodiac
 {

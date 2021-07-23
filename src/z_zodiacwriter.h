@@ -86,6 +86,8 @@ typedef std::pair<void const*, int> VoidIntPair;
 	std::vector<zCFunction>		m_functionList;
 	std::vector<zCProperty>     m_propertiesList;
 	std::vector<zCTypeInfo>     m_typeInfo;
+	std::vector<zCTemplate> m_templates;
+	std::vector<int>                m_ttypeList;
 
 
 	std::vector<uint32_t> stringAddress{0};

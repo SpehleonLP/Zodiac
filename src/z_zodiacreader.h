@@ -24,22 +24,31 @@ public:
 	void GetProperties(int typeId, zCProperty const*& begin, zCProperty const*& end) const;
 	int  asGetProperty(asITypeInfo * typeInfo, const char * name, int * typeId, int from = 0) const;
 
-	uint32_t saveDataByteLength()   const { return m_header->saveDataByteLength; }
-	uint32_t stringAddressCount()	const { return m_header->stringAddressLength; }
-	uint32_t stringTableLength()	const { return m_header->stringTableByteLength; }
-	uint32_t addressTableLength()	const { return m_header->addressTableLength; }
-	uint32_t moduleDataLength()		const { return m_header->moduleDataLength; }
-	uint32_t typeInfoLength()		const { return m_header->typeInfoLength; }
-	uint32_t globalsLength()		const { return m_header->globalsLength; }
-	uint32_t propertiesLength()		const { return m_header->propertiesLength; }
-	uint32_t functionTableLength()	const { return m_header->functionTableLength; }
+	inline uint32_t saveDataByteLength()    const { return m_header->saveDataByteLength; }
+	inline uint32_t stringAddressCount()	const { return m_header->stringAddressLength; }
+	inline uint32_t stringTableLength()		const { return m_header->stringTableByteLength; }
+	inline uint32_t addressTableLength()	const { return m_header->addressTableLength; }
+	inline uint32_t moduleDataLength()		const { return m_header->moduleDataLength; }
+	inline uint32_t typeInfoLength()		const { return m_header->typeInfoLength; }
+	inline uint32_t globalsLength()			const { return m_header->globalsLength; }
+	inline uint32_t propertiesLength()		const { return m_header->propertiesLength; }
+	inline uint32_t functionTableLength()	const { return m_header->functionTableLength; }
+	inline uint32_t templatesLength()		const { return m_header->templatesLength; }
+	inline uint32_t typeTableLength()		const { return templatesLength()+typeInfoLength(); }
+
+	inline uint32_t		 const * GetStringAddresses() const { return (uint32_t const*)(m_mmap.GetAddress() + m_header->stringAddressOffset); }
+	inline char			 const * GetStringTable() const { return (char const *)(m_mmap.GetAddress() + m_header->stringTableOffset); }
+	inline zCModule		 const * GetModules() const { return (zCModule const*)(m_mmap.GetAddress() + m_header->moduleDataOffset); }
+	inline zCEntry		 const * GetEntries() const { return (zCEntry const*)(m_mmap.GetAddress() + m_header->addressTableOffset); }
+	inline zCGlobalInfo  const * GetGlobals() const { return (zCGlobalInfo const*)(m_mmap.GetAddress() + m_header->globalsOffset); }
+	inline zCTypeInfo    const * GetTypeInfo() const { return (zCTypeInfo const*)(m_mmap.GetAddress() + m_header->typeInfoOffset); }
+	inline zCFunction    const * GetFunctions()  const { return (zCFunction const*)(m_mmap.GetAddress() + m_header->functionTableOffset); }
+	inline zCTemplate    const * GetTemplates()  const { return (zCTemplate const*)(m_mmap.GetAddress() + m_header->templatesOffset); }
 
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
 
-	void LoadScriptObject(void *, int address, int asTypeId) override;
-//if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	void LoadScriptObject(void *, int asTypeId) override;
+	void LoadScriptObject(void *, int address, int asTypeId, bool isWeak=false) override;
 
 	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringTableLength()? &m_stringTable[id] : nullptr;  }
 	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
@@ -53,9 +62,11 @@ public:
 
 private:
 friend class zCZodiac;
-	void LoadModules(asIScriptEngine *);
+	void ProcessModules(asIScriptEngine *, bool loadedByteCode);
 	void ReadSaveData(zREADER_FUNC_t, void *);
 	void RestoreGlobalVariables(asIScriptEngine *);
+	bool LoadByteCode(asIScriptEngine * engine);
+	void SolveTemplates(asIScriptEngine * engine);
 
 	static void RestorePrimitive(void *, int dstTypeId, const void * address, int srcTypeId);
 //everything we can restore without updating the loading table
@@ -76,13 +87,14 @@ friend class zCZodiac;
 	zCMemoryMap	  m_mmap;
 
 	zCHeader	  const * m_header;
-	uint32_t	  const * m_stringAddresses;
+//	uint32_t	  const * m_stringAddresses;
 	char		  const * m_stringTable;
 	zCModule	  const * m_modules;
 	zCEntry		  const * m_entries;
 	zCGlobalInfo  const * m_globals;
 	zCTypeInfo    const * m_typeInfo;
-	zCFunction    const * m_functions;
+//	zCFunction    const * m_functions;
+
 
 	struct Property
 	{
@@ -99,7 +111,8 @@ friend class zCZodiac;
 		void   * ptr;
 		int asTypeId;
 		int zTypeId;
-		int needRelease;
+		short needRelease;
+		bool beingLoaded;
 	};
 
 	std::vector<int>		m_asTypeIdFromStored;

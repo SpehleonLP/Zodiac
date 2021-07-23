@@ -75,6 +75,7 @@ SOURCES += \
 	../../src/z_memorymap.cpp \
 	../../src/z_zodiac.cpp \
 	../../src/z_zodiaccontext.cpp \
+	../../src/z_zodiacexception.cpp \
 	../../src/z_zodiacreader.cpp \
 	../../src/z_zodiacwriter.cpp
 
@@ -145,6 +146,7 @@ HEADERS += \
 	../../src/z_memorymap.h \
 	../../src/z_zodiac.h \
 	../../src/z_zodiaccontext.h \
+	../../src/z_zodiacexception.h \
 	../../src/z_zodiacreader.h \
 	../../src/z_zodiacstate.h \
 	../../src/z_zodiacwriter.h

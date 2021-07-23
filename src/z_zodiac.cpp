@@ -2,6 +2,7 @@
 #ifdef HAVE_ZODIAC
 #include "z_zodiacwriter.h"
 #include "z_zodiacreader.h"
+#include "z_zodiacexception.h"
 #include <algorithm>
 #include <cstring>
 #include <cassert>
@@ -27,67 +28,92 @@ zCZodiac::~zCZodiac()
 	m_engine->Release();
 }
 
-void    zCZodiac::SaveToFile(zIFileDescriptor * file)
+Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 {
-	if(m_inProgress.exchange(true))
-	{
-		throw std::runtime_error("Saving while in progress...");
-		return;
-	}
-
-	ClearBoolOnDestruct clearer(m_inProgress);
-
-	SortTypeList();
-
-	zCZodiacWriter writer(this, file, m_progress, m_totalSteps);
-
-	if(m_preSavingCallback)
-	{
-		(m_preSavingCallback)(m_userData);
-	}
-
-	writer.SaveModules(m_engine, GetProperty(zZP_SAVE_BYTECODE), GetProperty(zZP_STRIP_DEBUGINFO));
-
-	writer.WriteSaveData(m_saveDataWriteCallback, m_userData);
-
-	writer.ProcessQueue();
-
-	writer.WriteProperties();
-	writer.WriteFunctionTable();
-	writer.WriteAddressTable();
-	writer.WriteStringTable();
-
-
-	writer.WriteHeader();
-	writer.Finish();
-
-	if(m_postSavingCallback)
-	{
-		(m_postSavingCallback)(m_userData);
-	}
-}
-
-bool zCZodiac::LoadFromFile(zIFileDescriptor * file)
-{
-	if(m_inProgress.exchange(true))
-	{
-		throw std::runtime_error("Loading while in progress");
-		return false;
-	}
-
-	ClearBoolOnDestruct clearer(m_inProgress);
-	std::unique_ptr<zCZodiacReader> reader;
-
 	try
 	{
+		if(m_inProgress.exchange(true))
+			throw zE_AlreadyLoading;
+
+		ClearBoolOnDestruct clearer(m_inProgress);
+
 		SortTypeList();
-		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps));
+
+		zCZodiacWriter writer(this, file, m_progress, m_totalSteps);
+
+		if(m_preSavingCallback)
+		{
+			(m_preSavingCallback)(m_userData);
+		}
+
+		writer.SaveModules(m_engine, GetProperty(zZP_SAVE_BYTECODE), GetProperty(zZP_STRIP_DEBUGINFO));
+
+		writer.WriteSaveData(m_saveDataWriteCallback, m_userData);
+
+		writer.ProcessQueue();
+
+		writer.WriteProperties();
+		writer.WriteFunctionTable();
+		writer.WriteAddressTable();
+		writer.WriteStringTable();
+
+
+		writer.WriteHeader();
+		writer.Finish();
+
+		if(m_postSavingCallback)
+		{
+			(m_postSavingCallback)(m_userData);
+		}
 	}
 	catch(Exception & e)
 	{
 		error_string = std::move(e.text);
 		error_code   = e.code;
-		return false;
+	}
+	catch(Code & c)
+	{
+		error_string = Exception::ToString(c);
+		error_code   = c;
+	}
+
+	return error_code;
+}
+
+Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
+{
+	if(m_inProgress.exchange(true))
+	{
+		error_string = Exception::ToString(zE_AlreadySaving);
+		error_code   = zE_AlreadySaving;
+		return zE_AlreadySaving;
+	}
+
+	ClearBoolOnDestruct clearer(m_inProgress);
+	std::unique_ptr<zCZodiacReader> reader;
+	bool changedEngineState = false;
+
+	try
+	{
+		SortTypeList();
+		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps));
+		changedEngineState = reader->LoadByteCode(m_engine);
+		reader->ProcessModules(m_engine, changedEngineState);
+	}
+	catch(Exception & e)
+	{
+		error_string = std::move(e.text);
+		error_code   = e.code;
+
+		if(changedEngineState)
+			throw e.code;
+
+		return error_code;
+	}
+	catch(Code & c)
+	{
+		error_string = Exception::ToString(c);
+		error_code   = c;
 	}
 
 	if(m_preRestoreCallback)
@@ -95,7 +121,6 @@ bool zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		(m_preRestoreCallback)(m_userData);
 	}
 
-	reader->LoadModules(m_engine);
 	reader->ReadSaveData(m_saveDataReadCallback, m_userData);
 	reader->RestoreGlobalVariables(m_engine);
 
@@ -104,7 +129,31 @@ bool zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		(m_postRestoreCallback)(m_userData);
 	}
 
-	return true;
+#if 0
+	try
+	{
+		if(m_preRestoreCallback)
+		{
+			(m_preRestoreCallback)(m_userData);
+		}
+
+		reader->ReadSaveData(m_saveDataReadCallback, m_userData);
+		reader->RestoreGlobalVariables(m_engine);
+
+		if(m_postRestoreCallback)
+		{
+			(m_postRestoreCallback)(m_userData);
+		}
+	}
+	catch(Exception & e)
+	{
+		error_string = std::move(e.text);
+		error_code   = e.code;
+		throw error_code;
+	}
+#endif
+
+	return Code::zE_Success;
 }
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace, bool isValueType)

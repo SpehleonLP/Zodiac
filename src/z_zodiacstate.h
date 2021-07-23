@@ -55,6 +55,15 @@ struct zCTypeInfo
 	uint propertiesLength;
 };
 
+struct zCTemplate
+{
+	uint name;
+	uint nameSpace;
+	uint module;
+	uint declaration;
+};
+
+
 struct zCProperty
 {
 	uint name;
@@ -110,6 +119,9 @@ struct zCHeader
 	uint moduleDataLength{};
 	uint byteCodeOffset{};
 	uint byteCodeByteLength{};
+
+	uint templatesOffset{};
+	uint templatesLength{};
 
 	uint globalsOffset{};
 	uint globalsLength{};

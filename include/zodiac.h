@@ -30,85 +30,45 @@ enum zZodiacProp
 
 enum Code
 {
-	CastingException,
-	BufferOverrun,
-	BadObjectAddress,
-	BadFunctionInfo,
+	zE_Success							= 0,
 
-	DuplicateObjectAddress,
-	ObjectRestoreTypeMismatch,
-	ObjectUnserializable,
-	BadTypeId,
+	zE_CastingException					= -1,
+	zE_BufferOverrun					= -2,
+	zE_BadObjectAddress					= -3,
+	zE_BadFunctionInfo					= -4,
 
-	InconsistentObjectType,
-	InconsistentObjectOwnership,
-	OwnerNotEncoded,
-	UnknownEncodingProtocol,
+	zE_DuplicateObjectAddress			= -5,
+	zE_ObjectRestoreTypeMismatch		= -6,
+	zE_ObjectUnserializable				= -7,
+	zE_BadTypeId						= -8,
 
-	ModuleDoesNotExist,
-	DoubleLoad,
-	CantSaveContextWithoutBytecode,
-	ContextNotSuspended,
+	zE_InconsistentObjectType			= -9,
+	zE_InconsistentObjectOwnership		= -10,
+	zE_OwnerNotEncoded					= -11,
+	zE_UnknownEncodingProtocol			= -12,
 
-	DuplicatePropertyAddress,
-	UnableToRestoreProperty,
+	zE_ModuleDoesNotExist				= -13,
+	zE_DoubleLoad						= -14,
+	zE_CantSaveContextWithoutBytecode	= -15,
+	zE_ContextNotSuspended				= -16,
 
-	BadSubFileAddress,
+	zE_DuplicatePropertyAddress			= -17,
+	zE_UnableToRestoreProperty			= -18,
 
-	BadFileType,
-	Total
+	zE_BadSubFileAddress				= -19,
+
+	zE_BadFileType						= -20,
+	zE_AlreadyLoading					= -21,
+	zE_AlreadySaving					= -22,
+	zE_Total							= 23
 };
 
 enum zTYPEID
 {
 	zTYPEID_OBJHANDLE = asTYPEID_OBJHANDLE|asTYPEID_HANDLETOCONST,
-	zTYPEID_OBJECT = asTYPEID_MASK_OBJECT|asTYPEID_MASK_SEQNBR
+	zTYPEID_OBJECT = asTYPEID_MASK_OBJECT|asTYPEID_MASK_SEQNBR,
 };
 
-class Exception : public std::exception
-{
-public:
-
-	const char * ToString(int code)
-	{
-		if((uint)code >= Total)
-			return "";
-
-		static const char * strings[] = {
-			"Casting Exception",
-			"Buffer Overrun",
-			"Bad Object Address",
-			"Bad Function Info",
-
-			"DuplicateObject Address",
-			"Object Restore Type Mismatch",
-			"Object Unserializable",
-			"Bad Type Id",
-			"Inconsistent Object Type",
-			"Inconsistent Object Ownership",
-			"Owner Not Encoded",
-			"Unknown Encoding Protocol",
-			"Module Does Not Exist",
-			"Double Load",
-			"Cant Save Context Without Bytecode",
-			"Context Not Suspended",
-			"Duplicate Property Address",
-			"Unable To Restore Property",
-			"Bad Sub File Address",
-			"Bad File Type"
-		};
-
-		return strings[code];
-	}
-
-
-	Exception(Code code) :	text(ToString(code)), code(code) { }
-	Exception(std::string const& text, Code code) :	text(ToString(code) + (": " + text)), code(code) { }
-	const char * what() const noexcept { return text.c_str(); }
-
-	std::string text;
-	const Code code;
-};
 
 enum Flags
 {
@@ -160,8 +120,8 @@ public:
 	virtual bool    GetProperty(zZodiacProp property) const = 0;
 
 // progress / total steps for progress bar.
-	virtual void    SaveToFile(zIFileDescriptor *) = 0;
-	virtual bool    LoadFromFile(zIFileDescriptor *) = 0;
+	virtual Code    SaveToFile(zIFileDescriptor *) = 0;
+	virtual Code    LoadFromFile(zIFileDescriptor *) = 0;
 
 	virtual void  SetPreRestoreCallback(zFUNCTION_t callback) = 0;
 	virtual void  SetPreSavingCallback(zFUNCTION_t callback) = 0;
@@ -240,7 +200,6 @@ struct WriteSubFile;
 	template<typename T> int Read(T * array, int length = 1)	 { return ((asIBinaryStream*)this)->Read((void*)array, sizeof(T)*length); }
 	template<typename T> int Write(T const* array, int length = 1) { return ((asIBinaryStream*)this)->Write((void const*)array, sizeof(T) * length); }
 
-
 	virtual void   seek(int, Flags) = 0;
 	virtual uint tell() const = 0;
 
@@ -296,12 +255,8 @@ public:
 	template<typename U, typename... Args>
 	void LoadValuebject(uint id, U * ptr, void (*)(zIZodiacReader *, U *, int &));
 
-	virtual void LoadScriptObject(void *, int address, int asTypeId) = 0;
-	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0); }
-
-//if typeID is an object/handle then the next thing read should be an address, otherwise it should be a value type block.
-	virtual void LoadScriptObject(void *, int asTypeId) = 0;
-	inline  void LoadScriptObject(void * object, asITypeInfo * typeInfo) { LoadScriptObject(object, typeInfo? typeInfo->GetTypeId() : 0); }
+	virtual void LoadScriptObject(void *, int address, int asTypeId, bool isWeak = false) = 0;
+	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo, bool isWeak = false) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0, isWeak); }
 
 	virtual const char  * LoadString(int id) const = 0;
 	virtual asITypeInfo * LoadTypeInfo(int id, bool RefCount) = 0;
@@ -354,7 +309,7 @@ protected:
 template<typename U>
 inline U * zIZodiacReader::CastObject(void * ptr, uint typeId)
 {
-	if(typeId != zIZodiac::GetTypeId<U>()) throw Exception(CastingException);
+	if(typeId != zIZodiac::GetTypeId<U>()) throw Code::zE_CastingException;
 	return (U*)ptr;
 }
 
@@ -393,7 +348,7 @@ T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T
 	void * ptr = LoadObject(id, (zLOAD_FUNC_t)load_func, actualType);
 
 	if(actualType != zIZodiac::GetTypeId<T>())
-		throw Exception(CastingException);
+		throw Code::zE_CastingException;
 
 	return (T*)ptr;
 }
@@ -405,7 +360,7 @@ void zIZodiacReader::LoadValuebject(uint id, U * ptr, void (save_func)(zIZodiacR
 	LoadObject(id, ptr, (zLOAD_FUNC_t)save_func, actualType);
 
 	if(actualType != zIZodiac::GetTypeId<U>())
-		throw Exception(CastingException);
+		throw Code::zE_CastingException;
 }
 
 

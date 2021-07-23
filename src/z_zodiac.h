@@ -23,8 +23,8 @@ struct TypeEntry;
 	void    SetProperty(zZodiacProp property, bool value) override { if(value) m_options |= (1 << property); else m_options &= ~(1 << property); }
 	bool    GetProperty(zZodiacProp property) const override { return m_options & (1 << property); }
 
-	void    SaveToFile(zIFileDescriptor *)	 override;
-	bool	LoadFromFile(zIFileDescriptor *) override;
+	Code    SaveToFile(zIFileDescriptor *)	 override;
+	Code	LoadFromFile(zIFileDescriptor *) override;
 
 	void  SetPreRestoreCallback(zFUNCTION_t cb)			 override { m_preRestoreCallback = cb;  }
 	void  SetPreSavingCallback(zFUNCTION_t cb)			 override { m_preSavingCallback = cb;  }
