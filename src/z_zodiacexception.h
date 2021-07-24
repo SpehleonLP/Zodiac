@@ -37,7 +37,10 @@ public:
 			"Duplicate Property Address",
 			"Unable To Restore Property",
 			"Bad Sub File Address",
-			"Bad File Type"
+			"End Of File",
+			"Bad File Type",
+			"Already Loading",
+			"Already Saving"
 		};
 
 		return strings[code];

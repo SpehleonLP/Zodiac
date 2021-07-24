@@ -282,6 +282,7 @@ namespace Zodiac
 			value =  writer->SaveScriptObject(dict->GetAddressOfValue(), typeId, dict);
 		}
 
+		typeId = writer->SaveTypeId(typeId);
 		writer->GetFile()->Write(&typeId);
 		writer->GetFile()->Write(&value);
 	}
@@ -295,6 +296,7 @@ namespace Zodiac
 
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&value);
+		typeId = reader->LoadTypeId(typeId);
 
 		if(typeId <= asTYPEID_DOUBLE)
 		{
@@ -302,8 +304,9 @@ namespace Zodiac
 		}
 		else
 		{
-			reader->LoadScriptObject(&value, value, typeId);
-			new(dict) CScriptDictValue(reader->GetEngine(), &value, typeId);
+			void * dst{};
+			reader->LoadScriptObject(&dst, value, typeId);
+			new(dict) CScriptDictValue(reader->GetEngine(), dst, typeId);
 		}
 	}
 

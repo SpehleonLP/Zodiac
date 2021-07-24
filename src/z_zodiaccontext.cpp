@@ -112,18 +112,27 @@ struct StackVar
 
 void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, int&)
 {
+	int callStackSize = -1;
+	uint32_t status{};
 	auto file = writer->GetFile();
 	auto ctx = const_cast<asIScriptContext*>(_ctx);
 
-	if(ctx == nullptr || !writer->SaveByteCode())
+	if(ctx)
 	{
-		uint32_t callStackSize = 0;
-		file->Write(&callStackSize);
-		return;
+		callStackSize = ctx->GetCallstackSize();
+		status   = ctx->GetState();
 	}
 
-	uint32_t callStackSize  = ctx->GetCallstackSize();
+	if(!(status == asEXECUTION_PREPARED || status == asEXECUTION_SUSPENDED))
+	{
+		callStackSize = 0;
+	}
+
 	file->Write(&callStackSize);
+	file->Write(&status);
+
+	if(callStackSize <= 0)
+		return;
 
 //write stack frames
 	StackFrame sf;
@@ -231,21 +240,26 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 {
 	auto file = reader->GetFile();
 
-	uint32_t callStackSize{};
+	int callStackSize{};
+	uint32_t status;
 	file->Read(&callStackSize);
+	file->Read(&status);
 
-	if(!callStackSize)
+	asEContextState state = (asEContextState)status;
+
+	if(callStackSize < 0)
 	{
 		*_ctx = nullptr;
 		return;
 	}
 
 	auto ctx = *_ctx = reader->GetEngine()->RequestContext();
+	if(!callStackSize) return;
 	ctx->StartDeserialization();
 
 //write stack frames
 	StackFrame sf;
-	for(uint32_t i = 0; i < callStackSize; ++i)
+	for(int i = 0; i < callStackSize; ++i)
 	{
 		file->Read(&sf);
 
@@ -261,12 +275,21 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 	}
 
 //write current registers
-	file->Read(&sf);
+	if(sizeof(sf) != file->Read(&sf)) { throw zE_EndOfFile;	}
+
 	assert(sf.varCount == 0);
 	assert(sf.isCallState == 2);
 	sf.state.SetToContext(reader, ctx, 0);
 
 //write variable contents
+
+	if(state == asEXECUTION_PREPARED)
+	{
+		ctx->FinishDeserialization();
+		return;
+	}
+
+
 	StackVar var;
 	for(uint32_t i = 0; i < ctx->GetCallstackSize(); ++i)
 	{
@@ -277,7 +300,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			if(!ctx->IsVarInScope(j, i))
 				continue;
 
-			file->Read(&var);
+			if(sizeof(var) != file->Read(&var)) { throw zE_EndOfFile; }
 
 			assert(var.stackLevel == i);
 			assert(var.varId == j);

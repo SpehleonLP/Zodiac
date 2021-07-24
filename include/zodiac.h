@@ -56,11 +56,12 @@ enum Code
 	zE_UnableToRestoreProperty			= -18,
 
 	zE_BadSubFileAddress				= -19,
+	zE_EndOfFile						= -20,
+	zE_BadFileType						= -21,
 
-	zE_BadFileType						= -20,
-	zE_AlreadyLoading					= -21,
-	zE_AlreadySaving					= -22,
-	zE_Total							= 23
+	zE_AlreadyLoading					= -22,
+	zE_AlreadySaving					= -23,
+	zE_Total							= 24
 };
 
 enum zTYPEID

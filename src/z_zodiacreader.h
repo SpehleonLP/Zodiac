@@ -64,6 +64,7 @@ private:
 friend class zCZodiac;
 	void ProcessModules(asIScriptEngine *, bool loadedByteCode);
 	void ReadSaveData(zREADER_FUNC_t, void *);
+	void DocumentGlobalVariables(asIScriptEngine *);
 	void RestoreGlobalVariables(asIScriptEngine *);
 	bool LoadByteCode(asIScriptEngine * engine);
 	void SolveTemplates(asIScriptEngine * engine);

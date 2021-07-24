@@ -99,6 +99,7 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps));
 		changedEngineState = reader->LoadByteCode(m_engine);
 		reader->ProcessModules(m_engine, changedEngineState);
+		reader->DocumentGlobalVariables(m_engine);
 	}
 	catch(Exception & e)
 	{
@@ -121,8 +122,8 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		(m_preRestoreCallback)(m_userData);
 	}
 
-	reader->ReadSaveData(m_saveDataReadCallback, m_userData);
 	reader->RestoreGlobalVariables(m_engine);
+	reader->ReadSaveData(m_saveDataReadCallback, m_userData);
 
 	if(m_postRestoreCallback)
 	{

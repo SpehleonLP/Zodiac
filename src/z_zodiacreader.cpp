@@ -266,6 +266,36 @@ void zCZodiacReader::ReadSaveData(zREADER_FUNC_t func, void * userData)
 	}
 }
 
+void zCZodiacReader::DocumentGlobalVariables(asIScriptEngine * engine)
+{
+	int typeId;
+	const char *name, *nameSpace;
+
+	uint32_t noModules = engine->GetModuleCount();
+
+	for(uint32_t i = 0; i < noModules; ++i)
+	{
+		auto mod = engine->GetModuleByIndex(i);
+		int index = GetModuleIndex(mod->GetName(), i);
+
+		if(index < 0) continue;
+
+		uint32_t varCount = mod->GetGlobalVarCount();
+		for(uint32_t j = 0; j < varCount; j++ )
+		{
+			mod->GetGlobalVar(j, &name, &nameSpace, &typeId);
+			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
+
+
+			m_loadedObjects[global->address].asTypeId	 = typeId & ~zTYPEID_OBJHANDLE;
+			m_loadedObjects[global->address].zTypeId	 = -1;
+			m_loadedObjects[global->address].ptr		 = mod->GetAddressOfGlobalVar(j);
+			m_loadedObjects[global->address].needRelease = 0;
+			++m_progress;
+		}
+	}
+}
+
 void zCZodiacReader::RestoreGlobalVariables(asIScriptEngine * engine)
 {
 	int typeId;
@@ -422,6 +452,8 @@ void zCZodiacReader::ProcessModules(asIScriptEngine * engine, bool loadedByteCod
 			assert(!loadedByteCode || (m_properties[i].readType&zTYPEID_OBJECT) == (m_properties[i].writeType&zTYPEID_OBJECT));
 		}
 	}
+
+	DocumentGlobalVariables(engine);
 }
 
 void  zCZodiacReader::SolveTemplates(asIScriptEngine * engine)
@@ -668,7 +700,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 	auto & loaded = m_loadedObjects[address];
 
 //it is a handle i suppose
-	if(loaded.ptr)
+	if(loaded.ptr && dst != loaded.ptr)
 	{
 		assert((asTypeId & asTYPEID_OBJHANDLE) || (dst && *(void**)dst == nullptr));
 		assert(dst != nullptr);
@@ -678,6 +710,8 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		auto engine = GetEngine();
 		auto from_type = engine->GetTypeInfoById(loaded.asTypeId);
 		auto to_type   = engine->GetTypeInfoById(asTypeId);
+
+		assert(to_type != nullptr);
 
 		if(asTypeId == loaded.asTypeId && asTypeId & asTYPEID_SCRIPTOBJECT)
 		{
@@ -697,7 +731,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		return;
 	}
 //it loaded as nullptr
-	else if(loaded.asTypeId & asTYPEID_OBJHANDLE)
+	else if(loaded.asTypeId & asTYPEID_OBJHANDLE && (asTypeId & asTYPEID_OBJHANDLE))
 	{
 		*(void**)dst = nullptr;
 		return;
@@ -751,8 +785,8 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 	}
 	else
 	{
-//populate table
-		assert(false);
+//assure table is populated
+		assert(m_loadedObjects[address].ptr == dst);
 	}
 
 //---------------------------------------------------------
