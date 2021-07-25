@@ -124,7 +124,7 @@ namespace Zodiac
 	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&, bool isHandle)
 	{
 		assert(file != nullptr);
-		assert(*file == nullptr);
+		assert(*file == nullptr || isHandle == false);
 
 		if(isHandle)
 			*file = new CScriptFile();
@@ -169,24 +169,26 @@ namespace Zodiac
 		writer->GetFile()->Write(&value);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int&, bool)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int&, bool isHandle)
 	{
 		assert(any != nullptr);
-		assert(*any == nullptr);
+		assert(*any == nullptr || isHandle == false);
 
 		zAny value;
 		reader->GetFile()->Read(&value);
 
+		if(isHandle)
+			new(*any) CScriptAny(reader->GetEngine());
+
 //is this okay? type punning is discouraged in C++11 for some reason??
 		if(value.typeId <= asTYPEID_DOUBLE)
 		{
-			*any = new CScriptAny(&value.valueInt, value.typeId, reader->GetEngine());
+			(*any)->Store(&value.valueInt, value.typeId);
 		}
 		else
 		{
 			reader->LoadScriptObject(&value.valueObj, value.valueInt, value.typeId);
 
-			*any = new CScriptAny(reader->GetEngine());
 			(*any)->StoreMove(&value.valueObj, value.typeId, CScriptAny::MovePointer::isReference);
 		}
 	}
@@ -237,8 +239,6 @@ namespace Zodiac
 			assert((*array)->GetArrayObjectType() == arrayType);
 			(*array)->Resize(size);
 		}
-
-		std::cerr << (void*)*array << std::endl;
 
 		uint32_t elementTypeId = (*array)->GetElementTypeId();
 
@@ -310,6 +310,8 @@ namespace Zodiac
 		reader->GetFile()->Read(&value);
 		typeId = reader->LoadTypeId(typeId);
 
+		dict->FreeValue(reader->GetEngine());
+
 		if(typeId <= asTYPEID_DOUBLE)
 		{
 			new(dict) CScriptDictValue(reader->GetEngine(), &value, typeId);
@@ -339,12 +341,18 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int&, bool)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int&, bool isHandle)
 	{
 		assert(dict != nullptr);
-		assert(*dict == nullptr);
+		assert(*dict == nullptr || isHandle == false);
 
-		*dict = CScriptDictionary::Create(reader->GetEngine());
+		if(isHandle)
+			*dict = CScriptDictionary::Create(reader->GetEngine());
+		else
+		{
+			assert((*dict)->GetEngine() == reader->GetEngine());
+			(*dict)->DeleteAll();
+		}
 
 		auto file = reader->GetFile();
 
@@ -392,10 +400,10 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int&, bool)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int&, bool isHandle)
 	{
 		assert(grid != nullptr);
-		assert(*grid == nullptr);
+		assert(*grid == nullptr || isHandle == false);
 
 		int typeId{};
 		uint32_t width{}, height{};
@@ -409,7 +417,13 @@ namespace Zodiac
 		asITypeInfo * arrayType = reader->LoadTypeInfo(typeId, false);
 		assert(arrayType != nullptr);
 
-		*grid = CScriptGrid::Create(arrayType, width, height);
+		if(isHandle)
+			*grid = CScriptGrid::Create(arrayType, width, height);
+		else
+		{
+			assert((*grid)->GetGridObjectType() == arrayType);
+			(*grid)->Resize(width, height);
+		}
 
 		uint32_t elementTypeId = (*grid)->GetElementTypeId();
 

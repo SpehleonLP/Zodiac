@@ -41,6 +41,7 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 
 zCZodiacReader::~zCZodiacReader()
 {
+	return;
 	if(m_loadedObjects != nullptr)
 	{
 		auto engine = GetEngine();
@@ -648,9 +649,8 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 	else
 	{
 		auto stored_id = LoadTypeId(m_entries[address].typeId);
-		asTypeId &= zTYPEID_OBJECT;
 		assert((stored_id & asTYPEID_TEMPLATE) == (asTypeId & asTYPEID_TEMPLATE));
-		assert((asTypeId == stored_id));
+		assert(((asTypeId&zTYPEID_OBJECT) == stored_id));
 
 		assert(!entry->isValueType);
 		assert(!m_loadedObjects[address].beingLoaded);
@@ -691,10 +691,14 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 
 void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 {
-	if(!(typeId & asTYPEID_MASK_OBJECT) || (typeId & asTYPEID_OBJHANDLE))
+	if(!(typeId & asTYPEID_SCRIPTOBJECT) || (typeId & asTYPEID_OBJHANDLE))
 	{
 		return;
 	}
+
+
+	if(address > addressTableLength())
+		throw Exception(zE_BadObjectAddress);
 
 	if(m_loadedObjects[address].ptr)
 	{
@@ -871,6 +875,10 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 //first loop populate lookup table
 	for(auto p = begin; p < end; ++p)
 	{
+#ifndef NDEBUG
+		auto name     = ref->GetPropertyName(p->propertyId);
+#endif
+
 		auto typeId   = p->writeType;
 		auto offset   = ref->GetAddressOfProperty(p->propertyId);
 		uint32_t read = *(uint32_t*)((uint8_t*)src + p->readOffset);
