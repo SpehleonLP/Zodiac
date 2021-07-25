@@ -6,6 +6,8 @@
 #include <cinttypes>
 #include <cassert>
 
+#include <iostream>
+
 #define INS_1 "?&in = null"
 #define INS_2 INS_1 ", " INS_1
 #define INS_4 INS_2 ", " INS_2
@@ -74,12 +76,20 @@ static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
 		else
 			array = reinterpret_cast<CScriptArray const*>(objPtr);
 
-		fprintf(file, "[");
 
-		for(uint32_t i = 0; i < array->GetSize(); ++i)
+		std::cerr << (void*)array << std::endl;
+
+		if(array->GetSize() == 0)
+			fprintf(file, "[]");
+		else
 		{
-			PrintItem(file, depth+1, array->At(i), array->GetElementTypeId());
-			fprintf(file, (i+1 == array->GetSize())? "]" : ", ");
+			fprintf(file, "[");
+
+			for(uint32_t i = 0; i < array->GetSize(); ++i)
+			{
+				PrintItem(file, depth+1, array->At(i), array->GetElementTypeId());
+				fprintf(file, (i+1 == array->GetSize())? "]" : ", ");
+			}
 		}
 
 		return;

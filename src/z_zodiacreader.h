@@ -17,6 +17,7 @@ class zCZodiacReader : public zIZodiacReader
 {
 public:
 	zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps);
+	~zCZodiacReader();
 
 	int GetModuleIndex(const char * name, uint32_t quickCheck = ~0u) const;
 	zCGlobalInfo const* GetGlobalVar(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
@@ -56,7 +57,7 @@ public:
 	asIScriptFunction * LoadFunction(int id) override;
 	asIScriptContext *  LoadContext(int id) override;
 	void *				LoadObject(int id, zLOAD_FUNC_t, int & actualType) override;
-	void				LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType) override;
+	void				LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType, bool isHandle) override;
 
 	void Verify() const;
 
@@ -68,6 +69,7 @@ friend class zCZodiac;
 	void RestoreGlobalVariables(asIScriptEngine *);
 	bool LoadByteCode(asIScriptEngine * engine);
 	void SolveTemplates(asIScriptEngine * engine);
+	void PopulateTable(void * dst, uint32_t address, int typeId);
 
 	static void RestorePrimitive(void *, int dstTypeId, const void * address, int srcTypeId);
 //everything we can restore without updating the loading table

@@ -94,12 +94,12 @@ void ZodiacSave(zIZodiacWriter *, std::nullptr_t*, int &);
 std::unique_ptr<zIZodiac> zCreateZodiac(asIScriptEngine * engine);
 
 typedef void (*zSAVE_FUNC_t)(zIZodiacWriter *, void const*, int &);
-typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int &);
+typedef void (*zLOAD_FUNC_t)(zIZodiacReader *, void *, int &, bool);
 
 
 #define ZODIAC_GETSAVEFUNC(T) (static_cast<void (*)(Zodiac::zIZodiacWriter *, T const*, int &)>(ZodiacSave))
-#define ZODIAC_GETLOADFUNC_R(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T**, int &)>(ZodiacLoad))
-#define ZODIAC_GETLOADFUNC_V(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T*, int &)>(ZodiacLoad))
+#define ZODIAC_GETLOADFUNC_R(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T**, int &, bool)>(ZodiacLoad))
+#define ZODIAC_GETLOADFUNC_V(T) (static_cast<void (*)(Zodiac::zIZodiacReader *, T*, int &, bool)>(ZodiacLoad))
 
 
 class zIZodiac
@@ -141,13 +141,13 @@ public:
 
 	//does not copy string, assumes read only memory
 	template<typename T>
-	int   RegisterValueType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T*, int &), const char * nameSpace = nullptr)
+	int   RegisterValueType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T*, int &, bool), const char * nameSpace = nullptr)
 	{
 		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace, true);
 	}
 
 	template<typename T>
-	int   RegisterRefType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T**, int &), const char * nameSpace = nullptr)
+	int   RegisterRefType(uint typeId, uint byteLength, const char * name, void (*save)(zIZodiacWriter *, T const*, int &), void (*load)(zIZodiacReader *, T**, int &, bool), const char * nameSpace = nullptr)
 	{
 		return RegisterTypeCallback(typeId, byteLength, name, reinterpret_cast<zSAVE_FUNC_t>(save), reinterpret_cast<zLOAD_FUNC_t>(load), nameSpace, false);
 	}
@@ -277,7 +277,7 @@ private:
 	U * CastObject(void * ptr, uint typeId);
 
 	virtual void * LoadObject(int id, zLOAD_FUNC_t, int & actualType) = 0;
-	virtual void LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType) = 0;
+	virtual void LoadObject(int id, void *, zLOAD_FUNC_t, int & actualType, bool isHandle) = 0;
 };
 
 class zIZodiacWriter
@@ -358,7 +358,7 @@ template<typename U, typename... Args>
 void zIZodiacReader::LoadValuebject(uint id, U * ptr, void (save_func)(zIZodiacReader *, U *, int &))
 {
 	int actualType{zIZodiac::GetTypeId<U>()};
-	LoadObject(id, ptr, (zLOAD_FUNC_t)save_func, actualType);
+	LoadObject(id, ptr, (zLOAD_FUNC_t)save_func, actualType, false);
 
 	if(actualType != zIZodiac::GetTypeId<U>())
 		throw Code::zE_CastingException;

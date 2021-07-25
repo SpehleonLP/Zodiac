@@ -80,7 +80,7 @@ struct SaveData
 void WriteSaveDataFunc(Zodiac::zIZodiacWriter * writer, void* ptr)
 {
 	auto save = (SaveData*)ptr;
-	save->mgrId = writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
+	save->mgrId = 0; //writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
 	writer->GetFile()->Write(&save->mgrId);
 }
 
@@ -91,7 +91,7 @@ void ReadSaveDataFunc(Zodiac::zIZodiacReader * reader, void* ptr)
 	auto file = reader->GetFile();
 	file->Read(&save->mgrId);
 
-	reader->LoadValuebject(save->mgrId, save->mgr,  Zodiac::ZodiacLoadContextManager);
+	//reader->LoadValuebject(save->mgrId, save->mgr,  Zodiac::ZodiacLoadContextManager);
 }
 
 std::string ReadFile(const char * path)
@@ -192,7 +192,7 @@ bool LoadFromFile(Zodiac::zIZodiac * zodiac, const char * filename)
 		return false;
 
 	auto file = Zodiac::FromCFile(&fp);
-	return zodiac->LoadFromFile(file.get());
+	return zodiac->LoadFromFile(file.get()) == Zodiac::zE_Success;
 }
 
 int Run()
@@ -248,10 +248,31 @@ int Run()
 
 		engine->ReturnContext(ctx);
 
-		func = mod->GetFunctionByDecl("void RunSchedule()");
-		ctxManager.AddContext(engine.get(), func);
+		FILE * fp = fopen("save_file.zdc", "wb");
+
+//use pointer to fp to signify taking ownership and closing when the class is deleted
+		auto file = Zodiac::FromCFile(&fp);
+		zodiac->SaveToFile(file.get());
+
+
+//	func = mod->GetFunctionByDecl("void RunSchedule()");
+//		ctxManager.AddContext(engine.get(), func);
+	}
+	else
+	{
+		asIScriptModule *mod = engine->GetModule("script", asGM_ONLY_IF_EXISTS);
+		asIScriptFunction *func = mod->GetFunctionByDecl("void OnLoad()");
+
+		auto ctx = mod->GetEngine()->RequestContext();
+		int status = ctx->Prepare(func);
+
+		 status =  ctx->Execute();
+		LogResult(ctx, false);
+
+		engine->ReturnContext(ctx);
 	}
 
+/*
 	auto start_time = std::chrono::system_clock::now();
 	while(!ShouldSave && ctxManager.ExecuteScripts() > 0)
 	{
@@ -279,7 +300,7 @@ int Run()
 //use pointer to fp to signify taking ownership and closing when the class is deleted
 		auto file = Zodiac::FromCFile(&fp);
 		zodiac->SaveToFile(file.get());
-	}
+	}*/
 
 	return 0;
 }

@@ -39,6 +39,22 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_totalSteps = addressTableLength();
 }
 
+zCZodiacReader::~zCZodiacReader()
+{
+	if(m_loadedObjects != nullptr)
+	{
+		auto engine = GetEngine();
+
+		for(uint32_t i = 0; i < addressTableLength(); ++i)
+		{
+			while(m_loadedObjects[i].needRelease--)
+			{
+				engine->ReleaseScriptObject(m_loadedObjects[i].ptr, engine->GetTypeInfoById(m_loadedObjects[i].asTypeId));
+			}
+		}
+	}
+}
+
 void zCZodiacReader::Verify() const
 {
 	void * end = (void*)(m_mmap.GetAddress() + m_mmap.GetLength());
@@ -286,12 +302,7 @@ void zCZodiacReader::DocumentGlobalVariables(asIScriptEngine * engine)
 			mod->GetGlobalVar(j, &name, &nameSpace, &typeId);
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
-
-			m_loadedObjects[global->address].asTypeId	 = typeId & ~zTYPEID_OBJHANDLE;
-			m_loadedObjects[global->address].zTypeId	 = -1;
-			m_loadedObjects[global->address].ptr		 = mod->GetAddressOfGlobalVar(j);
-			m_loadedObjects[global->address].needRelease = 0;
-			++m_progress;
+			PopulateTable( mod->GetAddressOfGlobalVar(j), global->address, typeId);
 		}
 	}
 }
@@ -632,7 +643,7 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 
 		assert(entry->isValueType);
 		zIFileDescriptor::ReadSubFile sub_file(m_file, m_entries[address].offset, m_entries[address].byteLength);
-		(entry->onLoad)(this, dst, m_loadedObjects[address].zTypeId);
+		(entry->onLoad)(this, dst, m_loadedObjects[address].zTypeId, asTypeId & asTYPEID_OBJHANDLE);
 	}
 	else
 	{
@@ -647,34 +658,82 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 		m_loadedObjects[address].zTypeId  = entry->zTypeId;
 		m_loadedObjects[address].asTypeId = stored_id;
 		m_loadedObjects[address].beingLoaded = true;
-
-		if(stored_id == 0x10000012)
-		{
-			int break_point = 0;
-			++break_point;
-		}
+		m_loadedObjects[address].needRelease = 0;
 
 		zIFileDescriptor::ReadSubFile sub_file(m_file, m_entries[address].offset, m_entries[address].byteLength);
 
 		try
 		{
-			(entry->onLoad)(this, &m_loadedObjects[address].ptr, m_loadedObjects[address].zTypeId);
+			if(asTypeId & asTYPEID_OBJHANDLE)
+			{
+				(entry->onLoad)(this, &m_loadedObjects[address].ptr, m_loadedObjects[address].zTypeId, asTypeId & asTYPEID_OBJHANDLE);
+				*((void**)dst) = m_loadedObjects[address].ptr;
+			}
+			else
+			{
+				(entry->onLoad)(this, &dst, m_loadedObjects[address].zTypeId, asTypeId & asTYPEID_OBJHANDLE);
+				m_loadedObjects[address].ptr = dst;
+			}
 		}
 		catch(Code & c)
 		{
 			throw Exception(c);
 		}
 
+		m_loadedObjects[address].beingLoaded = false;
 		assert(m_loadedObjects[address].zTypeId  == entry->zTypeId);
 		assert(m_loadedObjects[address].asTypeId = stored_id);
-
-		if(address != 122)
-		*((void**)dst) = m_loadedObjects[address].ptr;
-		m_loadedObjects[address].beingLoaded = false;
 	}
 
 	return true;
 
+}
+
+void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
+{
+	if(!(typeId & asTYPEID_MASK_OBJECT) || (typeId & asTYPEID_OBJHANDLE))
+	{
+		return;
+	}
+
+	if(m_loadedObjects[address].ptr)
+	{
+		if(m_loadedObjects[address].ptr == dst)
+			return;
+
+		throw Exception(zE_DoubleLoad);
+	}
+
+	m_loadedObjects[address].ptr	  = dst;
+	m_loadedObjects[address].zTypeId  = zIZodiac::GetTypeId<asIScriptObject>();
+	m_loadedObjects[address].asTypeId = typeId;
+	++m_progress;
+
+	if(!(typeId & asTYPEID_SCRIPTOBJECT))
+		return;
+
+	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
+
+	auto & zTypeInfo = m_typeInfo[m_entries[address].typeId];
+	asIScriptObject * ref = (asIScriptObject*)dst;
+
+	const auto begin = &m_properties[zTypeInfo.propertiesBegin];
+	const auto end  = begin + zTypeInfo.propertiesLength;
+
+//first loop populate lookup table
+	for(auto p = begin; p < end; ++p)
+	{
+		auto typeId   = p->writeType;
+		auto offset   = ref->GetAddressOfProperty(p->propertyId);
+		uint32_t read = *(uint32_t*)((uint8_t*)src + p->readOffset);
+		assert(p->writeType == ref->GetPropertyTypeId(p->propertyId));
+
+//app objects don't have an owner so it shouldn't cause an infinite loop
+		if((typeId & asTYPEID_SCRIPTOBJECT) && !(typeId & asTYPEID_OBJHANDLE))
+		{
+			PopulateTable(offset, read, p->writeType);
+		}
+	}
 }
 
 void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, bool isWeak)
@@ -684,16 +743,16 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		throw Exception(zE_BadObjectAddress);
 
 //if the owner is non-zero restore the owner
-	if(m_entries[address].owner)
+	if(m_entries[address].owner && asTypeId > asTYPEID_DOUBLE)
 	{
-		void * ptr;
+		void * ptr{};
 		auto ownr = m_entries[address].owner;
 		auto ownrTypeId =  LoadTypeId(m_entries[ownr].typeId);
 
 //load owner if it isn't loaded (check to avoid addreffing it i guess)
 		if(!m_loadedObjects[ownr].ptr && !m_loadedObjects[ownr].beingLoaded)
 		{
-			LoadScriptObject(&ptr, ownr, ownrTypeId | asTYPEID_OBJHANDLE, true);
+			LoadScriptObject(&ptr, ownr, ownrTypeId | asTYPEID_OBJHANDLE, false);
 		}
 	}
 
@@ -710,6 +769,12 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		auto engine = GetEngine();
 		auto from_type = engine->GetTypeInfoById(loaded.asTypeId);
 		auto to_type   = engine->GetTypeInfoById(asTypeId);
+
+		if(to_type->GetFuncdefSignature())
+		{
+			if(RestoreAppObject(dst, address, asTypeId))
+				return;
+		}
 
 		assert(to_type != nullptr);
 
@@ -783,10 +848,15 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 //dereference to set up script object...
 		dst = *(void**)dst;
 	}
+	else if(loaded.ptr)
+		assert(loaded.ptr == dst);
 	else
 	{
 //assure table is populated
-		assert(m_loadedObjects[address].ptr == dst);
+		m_loadedObjects[address].asTypeId	 = _typeId & ~zTYPEID_OBJHANDLE;
+		m_loadedObjects[address].zTypeId	 = zIZodiac::GetTypeId<asIScriptObject>();
+		m_loadedObjects[address].ptr		 = dst;
+		++m_progress;
 	}
 
 //---------------------------------------------------------
@@ -807,18 +877,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		assert(p->writeType == ref->GetPropertyTypeId(p->propertyId));
 
 //app objects don't have an owner so it shouldn't cause an infinite loop
-		if((typeId & asTYPEID_SCRIPTOBJECT) && !(typeId & asTYPEID_OBJHANDLE))
-		{
-			if(m_loadedObjects[read].ptr)
-			{
-				throw Exception(zE_DoubleLoad);
-			}
-
-			m_loadedObjects[read].ptr	   = offset;
-			m_loadedObjects[read].zTypeId  = zIZodiac::GetTypeId<asIScriptObject>();
-			m_loadedObjects[read].asTypeId = ref->GetPropertyTypeId(p->propertyId);
-			++m_progress;
-		}
+		PopulateTable(offset, read, typeId);
 	}
 
 //Restore object contents
@@ -1043,7 +1102,7 @@ void * zCZodiacReader::LoadObject(int id, zLOAD_FUNC_t load_func, int & actualTy
 
 //ensure stack corruption if something goes wrong, (fail quickly if behavior is undefined)
 		void * dst{};
-		load_func(this, &dst, actualType);
+		load_func(this, &dst, actualType, false);
 
 		m_loadedObjects[id].ptr = dst;
 		m_loadedObjects[id].zTypeId = actualType;
@@ -1056,7 +1115,7 @@ void * zCZodiacReader::LoadObject(int id, zLOAD_FUNC_t load_func, int & actualTy
 	return m_loadedObjects[id].ptr;
 }
 
-void	 zCZodiacReader::LoadObject(int id, void * dst, zLOAD_FUNC_t load_func, int & actualType)
+void	 zCZodiacReader::LoadObject(int id, void * dst, zLOAD_FUNC_t load_func, int & actualType, bool isHandle)
 {
 //object address 0 is nullptr so negative values aren't considered
 	if(id == 0 || (uint32_t)id >= addressTableLength())
@@ -1065,11 +1124,11 @@ void	 zCZodiacReader::LoadObject(int id, void * dst, zLOAD_FUNC_t load_func, int
 	zCEntry const* entry = &m_entries[id];
 	zIFileDescriptor::ReadSubFile sub_file(m_file, entry->offset, entry->byteLength);
 
-	load_func(this, dst, actualType);
+	load_func(this, dst, actualType, isHandle);
 }
 
 template<typename T>
-static T ReadPrimitive(void const* address, int asTypeId)
+static T ReadPrimitive2(void const* address, int asTypeId)
 {
 	assert(asTypeId <= asTYPEID_DOUBLE);
 
@@ -1091,6 +1150,12 @@ static T ReadPrimitive(void const* address, int asTypeId)
 	};
 
 	return 0;
+}
+template<typename T>
+static T ReadPrimitive(void const* address, int asTypeId)
+{
+	auto eax = ReadPrimitive2<T>(address, asTypeId);
+	return eax;
 }
 
 //hopefully this gets optimized a lot

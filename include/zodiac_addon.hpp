@@ -26,6 +26,7 @@
 #include <string>
 #include <cassert>
 #include <cstring>
+extern void PrintArray(FILE * file, int depth, void const* objPtr, int typeId);
 
 namespace Zodiac
 {
@@ -67,7 +68,7 @@ namespace Zodiac
 		}
 	}
 
-	void ZodiacLoadContextManager(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&)
+	void ZodiacLoadContextManager(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&, bool)
 	{
 		uint32_t time{};
 		if(mgr->m_getTimeFunc)
@@ -120,12 +121,13 @@ namespace Zodiac
 		throw zE_ObjectUnserializable;
 	}
 
-	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&)
+	inline void ZodiacLoad(zIZodiacReader *, CScriptFile ** file, int&, bool isHandle)
 	{
 		assert(file != nullptr);
 		assert(*file == nullptr);
 
-		*file = new CScriptFile();
+		if(isHandle)
+			*file = new CScriptFile();
 	}
 #endif
 
@@ -167,7 +169,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&value);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptAny** any, int&, bool)
 	{
 		assert(any != nullptr);
 		assert(*any == nullptr);
@@ -212,10 +214,10 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptArray** array, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptArray** array, int&, bool isHandle)
 	{
 		assert(array != nullptr);
-		assert(*array == nullptr);
+		assert(*array == nullptr || isHandle == false);
 
 		int typeId{};
 		uint32_t size{};
@@ -228,7 +230,15 @@ namespace Zodiac
 		asITypeInfo * arrayType = reader->LoadTypeInfo(typeId, false);
 		assert(arrayType != nullptr);
 
-		*array = CScriptArray::Create(arrayType, size);
+		if(isHandle)
+			*array = CScriptArray::Create(arrayType, size);
+		else
+		{
+			assert((*array)->GetArrayObjectType() == arrayType);
+			(*array)->Resize(size);
+		}
+
+		std::cerr << (void*)*array << std::endl;
 
 		uint32_t elementTypeId = (*array)->GetElementTypeId();
 
@@ -238,6 +248,8 @@ namespace Zodiac
 			file->Read(&address);
 			reader->LoadScriptObject((*array)->At(i), address, elementTypeId);
 		}
+
+		assert((*array)->GetSize() == size);
 	}
 #endif
 
@@ -250,7 +262,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&string_id);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, std::string* string, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, std::string* string, int&, bool)
 	{
 		int string_id;
 		reader->GetFile()->Read(&string_id);
@@ -287,7 +299,7 @@ namespace Zodiac
 		writer->GetFile()->Write(&value);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictValue* dict, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictValue* dict, int&, bool)
 	{
 		assert(dict != nullptr);
 
@@ -327,7 +339,7 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictionary** dict, int&, bool)
 	{
 		assert(dict != nullptr);
 		assert(*dict == nullptr);
@@ -345,8 +357,8 @@ namespace Zodiac
 			CScriptDictValue value;
 
 			int real_type;
-			ZodiacLoad(reader, &key, real_type);
-			ZodiacLoad(reader, &value, real_type);
+			ZodiacLoad(reader, &key, real_type, false);
+			ZodiacLoad(reader, &value, real_type, false);
 
 			(*dict)->Insert(std::move(key), std::move(value));
 		}
@@ -380,7 +392,7 @@ namespace Zodiac
 		}
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptGrid** grid, int&, bool)
 	{
 		assert(grid != nullptr);
 		assert(*grid == nullptr);
@@ -431,7 +443,7 @@ namespace Zodiac
 		file->Write(&objectId);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptHandle* handle, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptHandle* handle, int&, bool)
 	{
 		assert(handle != nullptr);
 
@@ -485,7 +497,7 @@ namespace Zodiac
 		file->Write(&objectId);
 	}
 
-	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptWeakRef* handle, int&)
+	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptWeakRef* handle, int&, bool)
 	{
 		assert(handle != nullptr);
 
