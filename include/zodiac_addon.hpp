@@ -478,7 +478,7 @@ namespace Zodiac
 			reader->LoadScriptObject(&obj, objectId, typeInfo->GetTypeId(), true);
 		}
 
-		new(handle) CScriptHandle(obj, typeInfo);
+		handle->Set(obj, typeInfo);
 	}
 #endif
 
@@ -529,7 +529,10 @@ namespace Zodiac
 		void * obj{};
 		reader->LoadScriptObject(&obj, objectId, typeInfo, true);
 
-		new(handle) CScriptWeakRef(obj, handleTypeInfo);
+		if(handleTypeInfo != nullptr)
+		{
+			*handle = CScriptWeakRef(obj, handleTypeInfo);
+		}
 	}
 #endif
 

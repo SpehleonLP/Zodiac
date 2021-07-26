@@ -41,16 +41,20 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 
 zCZodiacReader::~zCZodiacReader()
 {
-	return;
+	//return;
 	if(m_loadedObjects != nullptr)
 	{
 		auto engine = GetEngine();
 
 		for(uint32_t i = 0; i < addressTableLength(); ++i)
 		{
-			while(m_loadedObjects[i].needRelease--)
+			if(!m_loadedObjects[i].needRelease) continue;
+
+			auto typeInfo = engine->GetTypeInfoById(m_loadedObjects[i].asTypeId);
+
+			while(m_loadedObjects[i].needRelease-- > 0)
 			{
-				engine->ReleaseScriptObject(m_loadedObjects[i].ptr, engine->GetTypeInfoById(m_loadedObjects[i].asTypeId));
+				engine->ReleaseScriptObject(m_loadedObjects[i].ptr, typeInfo);
 			}
 		}
 	}
@@ -792,6 +796,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		else
 		{
 			engine->RefCastObject(m_loadedObjects[address].ptr, from_type, to_type, (void**)dst);
+			m_loadedObjects[address].needRelease += isWeak;
 		}
 
 		if(*(void**)dst == nullptr)
