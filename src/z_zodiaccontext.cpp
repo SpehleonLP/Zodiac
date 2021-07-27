@@ -218,15 +218,9 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 			return;
 		}
 
-
 		void * ptr{};
-		reader->LoadScriptObject(&ptr, address, asTypeId);
+		reader->LoadScriptObject(&ptr, address, asTypeId | asTYPEID_OBJHANDLE);
 
-		if(address == 122)
-		{
-			int break_point = 0;
-				++break_point;
-		}
 
 		ctx->SetVarContents(var, stack, ptr, asTypeId);
 		return;

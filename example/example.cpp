@@ -80,7 +80,7 @@ struct SaveData
 void WriteSaveDataFunc(Zodiac::zIZodiacWriter * writer, void* ptr)
 {
 	auto save = (SaveData*)ptr;
-	save->mgrId = 0; //writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
+	save->mgrId = writer->SaveObject<CContextMgr>(save->mgr, Zodiac::ZodiacSaveContextManager);
 	writer->GetFile()->Write(&save->mgrId);
 }
 
@@ -91,7 +91,7 @@ void ReadSaveDataFunc(Zodiac::zIZodiacReader * reader, void* ptr)
 	auto file = reader->GetFile();
 	file->Read(&save->mgrId);
 
-	//reader->LoadValuebject(save->mgrId, save->mgr,  Zodiac::ZodiacLoadContextManager);
+	reader->LoadValuebject(save->mgrId, save->mgr,  Zodiac::ZodiacLoadContextManager);
 }
 
 std::string ReadFile(const char * path)
@@ -248,15 +248,16 @@ int Run()
 
 		engine->ReturnContext(ctx);
 
+#if 0
 		FILE * fp = fopen("save_file.zdc", "wb");
 
 //use pointer to fp to signify taking ownership and closing when the class is deleted
 		auto file = Zodiac::FromCFile(&fp);
 		zodiac->SaveToFile(file.get());
-
-
-//	func = mod->GetFunctionByDecl("void RunSchedule()");
-//		ctxManager.AddContext(engine.get(), func);
+#else
+		func = mod->GetFunctionByDecl("void RunSchedule()");
+		ctxManager.AddContext(engine.get(), func);
+#endif
 	}
 	else
 	{
@@ -272,7 +273,6 @@ int Run()
 		engine->ReturnContext(ctx);
 	}
 
-/*
 	auto start_time = std::chrono::system_clock::now();
 	while(!ShouldSave && ctxManager.ExecuteScripts() > 0)
 	{
@@ -300,7 +300,7 @@ int Run()
 //use pointer to fp to signify taking ownership and closing when the class is deleted
 		auto file = Zodiac::FromCFile(&fp);
 		zodiac->SaveToFile(file.get());
-	}*/
+	}
 
 	return 0;
 }

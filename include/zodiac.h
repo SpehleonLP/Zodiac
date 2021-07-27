@@ -248,13 +248,13 @@ public:
 	virtual asIScriptEngine * GetEngine() const = 0;
 
 	template<typename U, typename... Args>
-	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &));
+	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &, bool));
 
 	template<typename U>
-	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &));
+	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &, bool));
 
 	template<typename U, typename... Args>
-	void LoadValuebject(uint id, U * ptr, void (*)(zIZodiacReader *, U *, int &));
+	void LoadValuebject(uint id, U * ptr, void (*)(zIZodiacReader *, U *, int &, bool));
 
 	virtual void LoadScriptObject(void *, int address, int asTypeId, bool isWeak = false) = 0;
 	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo, bool isWeak = false) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0, isWeak); }
@@ -330,7 +330,7 @@ inline U * zIZodiacReader::CastObject(void * ptr, uint typeId)
 
 
 template<typename T, typename... Args>
-T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &))
+T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &, bool))
 {
 	int actualType{zIZodiac::GetTypeId<T>()};
 	void * ptr = LoadObject(id, (zLOAD_FUNC_t)load_func, actualType);
@@ -343,7 +343,7 @@ T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T
 }
 
 template<typename T>
-T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &))
+T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T **, int &, bool))
 {
 	int actualType{zIZodiac::GetTypeId<T>()};
 	void * ptr = LoadObject(id, (zLOAD_FUNC_t)load_func, actualType);
@@ -355,7 +355,7 @@ T *  zIZodiacReader::LoadRefObject(uint id, void (load_func)(zIZodiacReader *, T
 }
 
 template<typename U, typename... Args>
-void zIZodiacReader::LoadValuebject(uint id, U * ptr, void (save_func)(zIZodiacReader *, U *, int &))
+void zIZodiacReader::LoadValuebject(uint id, U * ptr, void (save_func)(zIZodiacReader *, U *, int &, bool))
 {
 	int actualType{zIZodiac::GetTypeId<U>()};
 	LoadObject(id, ptr, (zLOAD_FUNC_t)save_func, actualType, false);

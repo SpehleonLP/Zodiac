@@ -769,9 +769,7 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 //it is a handle i suppose
 	if(loaded.ptr && dst != loaded.ptr)
 	{
-		assert((asTypeId & asTYPEID_OBJHANDLE) || (dst && *(void**)dst == nullptr));
-		assert(dst != nullptr);
-		assert(*(void**)dst == nullptr);
+		assert(dst && *(void**)dst == nullptr);
 		assert(loaded.asTypeId & (asTYPEID_MASK_OBJECT));
 
 		auto engine = GetEngine();
