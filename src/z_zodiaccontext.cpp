@@ -18,9 +18,14 @@ struct CtxCallState
 	{
 		int typeId = reader->LoadTypeId(objectType);
 		void * scriptObject{};
+		auto _currentFunction = reader->LoadFunction(currentFunction);
+
 		reader->LoadScriptObject(&scriptObject, objectId, reader->LoadTypeId(objectType));
-		ctx->PushFunction(reader->LoadFunction(currentFunction), scriptObject, typeId);
-		SetToContext(reader, ctx, 0);
+		ctx->PushFunction(_currentFunction, scriptObject, typeId);
+
+		SetToContext(reader, ctx, 0, _currentFunction);
+
+		if(_currentFunction) _currentFunction->Release();
 	}
 
 	int GetFromContext(Zodiac::zIZodiacWriter * writer, asIScriptContext * ctx, int i)
@@ -35,11 +40,9 @@ struct CtxCallState
 		return r;
 	}
 
-	int SetToContext(Zodiac::zIZodiacReader * reader, asIScriptContext * ctx, int i)
+	int SetToContext(Zodiac::zIZodiacReader * reader, asIScriptContext * ctx, int i, asIScriptFunction * _currentFunction = nullptr)
 	{
-		asIScriptFunction * _currentFunction{};
-
-		_currentFunction = reader->LoadFunction(currentFunction);
+		if(!_currentFunction) reader->LoadFunction(currentFunction);
 		return ctx->SetCallStateRegisters(i, stackFramePointer, _currentFunction, programPointer, stackPointer, stackIndex);
 	}
 };
@@ -172,8 +175,6 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 			var.typeId = writer->SaveTypeId(typeInfo);
 			var.object = writer->SaveScriptObject(ctx->GetAddressOfVar(j, i), typeInfo);
 
-			std::cerr << "typeInfo: " << var.typeId << "\t" << typeInfo << std::endl;
-			std::cerr << "object: " << var.object << std::endl;
 			file->Write(&var);
 		}
 	}
@@ -184,14 +185,14 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 	if(asTypeId <= asTYPEID_DOUBLE)
 	{
 		asQWORD object;
-		reader->LoadScriptObject(&object, address, asTypeId);
+		reader->LoadScriptObject(&object, address, asTypeId, true);
 		ctx->SetVarContents(var, stack, &object, asTypeId);
 		return;
 	}
 	else if(asTypeId & asTYPEID_SCRIPTOBJECT)
 	{
 		void * object{};
-		reader->LoadScriptObject(&object, address, asTypeId | asTYPEID_OBJHANDLE);
+		reader->LoadScriptObject(&object, address, asTypeId | asTYPEID_OBJHANDLE, true);
 		ctx->SetVarContents(var, stack, object, asTypeId);
 		return;
 	}
@@ -202,7 +203,7 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 		if(typeInfo && typeInfo->GetFuncdefSignature())
 		{
 			void * object{};
-			reader->LoadScriptObject(&object, address, asTypeId);
+			reader->LoadScriptObject(&object, address, asTypeId, true);
 			ctx->SetVarContents(var, stack, object, asTypeId);
 			return;
 		}
@@ -212,14 +213,14 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 			std::unique_ptr<uint8_t[]> object(new uint8_t[size]);
 
 	//dunno its something
-			reader->LoadScriptObject(&object[0], address, asTypeId);
+			reader->LoadScriptObject(&object[0], address, asTypeId, true);
 			ctx->SetVarContents(var, stack, &object[0], asTypeId);
 
 			return;
 		}
 
 		void * ptr{};
-		reader->LoadScriptObject(&ptr, address, asTypeId | asTYPEID_OBJHANDLE);
+		reader->LoadScriptObject(&ptr, address, asTypeId | asTYPEID_OBJHANDLE, true);
 
 
 		ctx->SetVarContents(var, stack, ptr, asTypeId);
@@ -300,9 +301,6 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			assert(var.varId == j);
 
 			auto typeInfo = reader->LoadTypeId(var.typeId);
-
-			std::cerr << "typeInfo: " << var.typeId << "\t" << typeInfo << std::endl;
-			std::cerr << "object: " << var.object << std::endl;
 
 			zLoadVariable(reader, ctx, j, i, var.object, typeInfo);
 		}

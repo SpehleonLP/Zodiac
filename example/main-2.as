@@ -46,7 +46,6 @@ void TestFunc()
 	Println("test test test");
 }
 
-
 void SetUp()
 {
 //	fooA = Foo(1, 2, 3, 4);
@@ -77,6 +76,17 @@ void SetUp()
 	OnLoad();
 	
 	Println("finished set up");
+}
+
+
+void RunSchedule()
+{
+	Foo@ foo;
+	dict.Get("key", @foo);
+	
+	SaveAndQuit();
+	
+	foo.Print();
 }
 
 void OnLoad()
