@@ -6,7 +6,11 @@
 #include <cinttypes>
 #include <cassert>
 
+#include <sstream>
 #include <iostream>
+
+Print::PrintNonPrimitiveType* Print::g_PrintRegisteredType{PrintAddonTypes};
+Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 
 #define INS_1 "?&in = null"
 #define INS_2 INS_1 ", " INS_1
@@ -34,35 +38,18 @@
 #define W_ARGS_8 W_ARGS_4 , W_ARG(4) , W_ARG(5) , W_ARG(6), W_ARG(7)
 #define W_ARGS_16 W_ARGS_8, W_ARG(8) , W_ARG(9) , W_ARG(10), W_ARG(11), W_ARG(12) , W_ARG(13) , W_ARG(14), W_ARG(15)
 
-static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
+bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth)
 {
-	switch(typeId)
-	{
-	case asTYPEID_VOID: return;
-	case asTYPEID_BOOL:		fprintf(file, "%s", (*(bool const*)objPtr)? "true" : "false"); return;
-	case asTYPEID_INT8:		fprintf(file, "%i",   (uint32_t) *(int8_t   const*)objPtr); return;
-	case asTYPEID_INT16:	fprintf(file, "%i",   (uint32_t) *(int16_t  const*)objPtr); return;
-	case asTYPEID_INT32:	fprintf(file, "%i",				 *(int32_t  const*)objPtr); return;
-	case asTYPEID_INT64:	fprintf(file, "%li",			 *(int64_t  const*)objPtr); return;
-	case asTYPEID_UINT8:	fprintf(file, "%u",   (uint32_t) *(uint8_t  const*)objPtr); return;
-	case asTYPEID_UINT16:	fprintf(file, "%u",	  (uint32_t) *(uint16_t const*)objPtr); return;
-	case asTYPEID_UINT32:	fprintf(file, "%u",				 *(uint32_t const*)objPtr); return;
-	case asTYPEID_UINT64:	fprintf(file, "%lu",			 *(uint64_t const*)objPtr); return;
-	case asTYPEID_FLOAT:	fprintf(file, "%f",				 *(float    const*)objPtr); return;
-	case asTYPEID_DOUBLE:	fprintf(file, "%f",   (float)	 *(double   const*)objPtr); return;
-	default: break;
-	}
-
 	auto ctx = asGetActiveContext();
-	if(!ctx) return;
+	if(!ctx) return false;
 	auto engine = ctx->GetEngine();
 
 	int stringTypeId = engine->GetStringFactoryReturnTypeId();
 
 	if(stringTypeId == typeId)
 	{
-		fprintf(file, "%s", ((std::string const*)objPtr)->c_str());
-		return;
+		dst << *((std::string const*)objPtr);
+		return true;
 	}
 
 	auto typeInfo = engine->GetTypeInfoById(typeId);
@@ -80,78 +67,136 @@ static void PrintItem(FILE * file, int depth, void const* objPtr, int typeId)
 		std::cerr << (void*)array << std::endl;
 
 		if(array->GetSize() == 0)
-			fprintf(file, "[]");
+			dst << "[]";
 		else
 		{
-			fprintf(file, "[");
+			dst << "[";
 
 			for(uint32_t i = 0; i < array->GetSize(); ++i)
 			{
-				PrintItem(file, depth+1, array->At(i), array->GetElementTypeId());
-				fprintf(file, (i+1 == array->GetSize())? "]" : ", ");
+				Print::PrintTemplate(dst, array->At(i), array->GetElementTypeId(), depth+1);
+				dst << ((i+1 == array->GetSize())? "]" : ", ");
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, int depth)
+{
+	switch(typeId)
+	{
+	case asTYPEID_VOID:		return;
+	case asTYPEID_BOOL:		dst << ((*(bool const*)objPtr)? "true" : "false"); return;
+	case asTYPEID_INT8:		dst <<  *(int8_t   const*)objPtr; return;
+	case asTYPEID_INT16:	dst <<  *(int16_t  const*)objPtr; return;
+	case asTYPEID_INT32:	dst << 	*(int32_t  const*)objPtr; return;
+	case asTYPEID_INT64:	dst << 	*(int64_t  const*)objPtr; return;
+	case asTYPEID_UINT8:	dst <<  *(uint8_t  const*)objPtr; return;
+	case asTYPEID_UINT16:	dst <<  *(uint16_t const*)objPtr; return;
+	case asTYPEID_UINT32:	dst << 	*(uint32_t const*)objPtr; return;
+	case asTYPEID_UINT64:	dst << 	*(uint64_t const*)objPtr; return;
+	case asTYPEID_FLOAT:	dst << *(float    const*)objPtr; return;
+	case asTYPEID_DOUBLE:	dst <<  *(double   const*)objPtr; return;
+	default: break;
+	}
+
+	auto ctx = asGetActiveContext();
+	if(!ctx) return;
+	auto engine = ctx->GetEngine();
+
+	auto typeInfo = engine->GetTypeInfoById(typeId);
+
+	if(!typeInfo)
+	{
+		dst << "BAD_TYPEID";
+		return;
+	}
+
+	if(objPtr == nullptr)
+	{
+		dst << typeInfo->GetName();
+		return;
+	}
+
+	if(typeInfo->GetFuncdefSignature())
+	{
+		auto func = reinterpret_cast<asIScriptFunction const*>(objPtr);
+		dst << func->GetDeclaration(true, true, true);
+		return;
+	}
+
+	auto enumValueCount = typeInfo->GetEnumValueCount();
+	if(enumValueCount)
+	{
+		int value = *(uint32_t const*)objPtr;
+
+		dst << typeInfo->GetName();
+
+		for(uint32_t i = 0; i < enumValueCount; ++i)
+		{
+			int val;
+			const char * text = typeInfo->GetEnumValueByIndex(i, &val);
+
+			if(val == value)
+			{
+				dst << "::" << text;
 			}
 		}
 
 		return;
 	}
 
-
-	if(typeInfo)
+	if(typeId & asTYPEID_SCRIPTOBJECT)
 	{
+		if(g_PrintScriptObjectType && g_PrintScriptObjectType(dst, objPtr, typeId, depth))
+			return;
+
 		if(typeId & asTYPEID_OBJHANDLE)
 		{
-			fprintf(file, "@%s(" PRIxPTR ")", typeInfo->GetName(), (intptr_t)(*(void*const*)objPtr));
+			dst << "@" << typeInfo->GetName() << "(" <<  *(void**)objPtr << ")";
 		}
 		else
 		{
-			fprintf(file, "%s(" PRIxPTR ")", typeInfo->GetName(), (intptr_t)(objPtr));
+			dst << typeInfo->GetName() << "(" <<  objPtr << ")";
+		}
+	}
+
+	if(typeId & (asTYPEID_APPOBJECT|asTYPEID_TEMPLATE))
+	{
+		if(g_PrintRegisteredType != nullptr)
+		{
+			if(typeId & asTYPEID_OBJHANDLE)
+			{
+				typeId &= ~(asTYPEID_OBJHANDLE|asTYPEID_HANDLETOCONST);
+				objPtr = *(void**)objPtr;
+			}
+
+			if(g_PrintRegisteredType(dst, objPtr, typeId, depth))
+				return;
 		}
 
+		dst << "RegisteredObject";
+
 		return;
 	}
 
-
-	if(typeId & asTYPEID_SCRIPTOBJECT)
-	{
-		auto typeInfo = engine->GetTypeInfoById(typeId);
-
-		fprintf(file, "%s(" PRIxPTR ")", typeInfo->GetName(), (intptr_t)objPtr);
-		return;
-	}
-
-	if(typeId & asTYPEID_APPOBJECT)
-	{
-		auto typeInfo = engine->GetTypeInfoById(typeId);
-
-		fprintf(file, "%s(" PRIxPTR ")", typeInfo->GetName(), (intptr_t)objPtr);
-		return;
-	}
-
-	fprintf(file, "UNKNOWN");
+	dst << "UNKNOWN";
 
 	return;
 }
 
-static void PrintTemplate(FILE * file, void const *objPtr, int typeId)
-{
-	PrintItem(file, 0, objPtr, typeId);
-}
-
-template<typename... Args>
-static void PrintTemplate(FILE * file, void const *objPtr, int typeId, Args... args)
-{
-	PrintItem(file, 0, objPtr, typeId);
-	PrintTemplate(file, std::move(args)...);
-}
-
 static void PrintFunc(IN_ARGS_16)
 {
-	PrintTemplate(stdout, W_ARGS_16);
+	Print::PrintTemplate(std::cout, W_ARGS_16);
 }
 
 static void PrintFuncLn(IN_ARGS_16)
 {
-	PrintTemplate(stdout, W_ARGS_16);
+	Print::PrintTemplate(std::cout, W_ARGS_16);
 	printf("\n");
 }
 
