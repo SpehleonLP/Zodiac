@@ -14,8 +14,10 @@ Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 
 #define INS_1 "?&in = null"
 #define INS_2 INS_1 ", " INS_1
+#define INS_3 INS_2 ", " INS_1
 #define INS_4 INS_2 ", " INS_2
 #define INS_8 INS_4 ", " INS_4
+#define INS_15 INS_8 ", " INS_4 ", " INS_3
 #define INS_16 INS_8 ", " INS_8
 
 #define V_ARG(n, q) void q* objPtr##n, int typeId##n
@@ -197,12 +199,25 @@ static void PrintFunc(IN_ARGS_16)
 static void PrintFuncLn(IN_ARGS_16)
 {
 	Print::PrintTemplate(std::cout, W_ARGS_16);
-	printf("\n");
+	std::cout << std::endl;
 }
 
-void Print::asRegister( asIScriptEngine * engine)
+static void PrettyPrinting(IN_ARGS_16, std::string *thisPointer)
+{
+	std::stringstream ss;
+	Print::PrintTemplate(ss, W_ARGS_16);
+	new(thisPointer) std::string(ss.str());
+}
+
+
+void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter)
 {
 	int r;
+
+	if(registerStdStringFormatter)
+	{
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in, " INS_15 ")",    asFUNCTION(PrettyPrinting), asCALL_CDECL_OBJLAST); assert( r >= 0 );
+	}
 
 	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);

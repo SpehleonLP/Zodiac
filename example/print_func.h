@@ -35,7 +35,7 @@ inline void PrintTemplate(std::ostream & dst, void const *objPtr, int typeId, Ar
 	PrintTemplate(dst, std::move(args)...);
 }
 
-void asRegister( asIScriptEngine * engine);
+void asRegister( asIScriptEngine * engine, bool registerStdStringFormatter = true);
 
 };
 
