@@ -9,7 +9,7 @@
 #include <sstream>
 #include <iostream>
 
-Print::PrintNonPrimitiveType* Print::g_PrintRegisteredType{PrintAddonTypes};
+Print::PrintNonPrimitiveType* Print::g_PrintRegisteredType{&Print::PrintAddonTypes};
 Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 
 #define INS_1 "?&in = null"
