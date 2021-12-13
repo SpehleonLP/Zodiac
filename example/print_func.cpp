@@ -65,9 +65,6 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
 		else
 			array = reinterpret_cast<CScriptArray const*>(objPtr);
 
-
-		std::cerr << (void*)array << std::endl;
-
 		if(array->GetSize() == 0)
 			dst << "[]";
 		else
