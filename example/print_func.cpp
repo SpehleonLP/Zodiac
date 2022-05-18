@@ -5,6 +5,7 @@
 #include <angelscript.h>
 #include <cinttypes>
 #include <cassert>
+#include <array>
 
 #include <sstream>
 #include <iostream>
@@ -19,6 +20,14 @@ Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 #define INS_8 INS_4 ", " INS_4
 #define INS_15 INS_8 ", " INS_4 ", " INS_3
 #define INS_16 INS_8 ", " INS_8
+
+#define OUTS_1 "?&in = null"
+#define OUTS_2 OUTS_1 ", " OUTS_1
+#define OUTS_3 OUTS_2 ", " OUTS_1
+#define OUTS_4 OUTS_2 ", " OUTS_2
+#define OUTS_8 OUTS_4 ", " OUTS_4
+#define OUTS_15 OUTS_8 ", " OUTS_4 ", " OUTS_3
+#define OUTS_16 OUTS_8 ", " OUTS_8
 
 #define V_ARG(n, q) void q* objPtr##n, int typeId##n
 #define V_ARGS_1(q) V_ARG(0, q)
@@ -39,6 +48,13 @@ Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 #define W_ARGS_4 W_ARGS_2 , W_ARG(2) , W_ARG(3)
 #define W_ARGS_8 W_ARGS_4 , W_ARG(4) , W_ARG(5) , W_ARG(6), W_ARG(7)
 #define W_ARGS_16 W_ARGS_8, W_ARG(8) , W_ARG(9) , W_ARG(10), W_ARG(11), W_ARG(12) , W_ARG(13) , W_ARG(14), W_ARG(15)
+
+#define A_ARG(n) std::pair<void const*, int>{objPtr##n, typeId##n}
+#define A_ARGS_1 A_ARG(0)
+#define A_ARGS_2 A_ARGS_1 , A_ARG(1)
+#define A_ARGS_4 A_ARGS_2 , A_ARG(2) , A_ARG(3)
+#define A_ARGS_8 A_ARGS_4 , A_ARG(4) , A_ARG(5) , A_ARG(6), A_ARG(7)
+#define A_ARGS_16 A_ARGS_8, A_ARG(8) , A_ARG(9) , A_ARG(10), A_ARG(11), A_ARG(12) , A_ARG(13) , A_ARG(14), A_ARG(15)
 
 bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth)
 {
@@ -188,6 +204,33 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 	return;
 }
 
+void Print::PrintFormat(std::ostream & stream, std::string const& in, std::pair<void const*, int> const* args, int argc)
+{
+	if(argc <= 0)
+	{
+		stream << in;
+		return;
+	}
+
+	for(size_t itr = 0, next = 0; itr < in.size(); itr = next)
+	{
+		next = in.find_first_of('%', itr);
+		stream << in.substr(itr, next-itr);
+
+		if(next == std::string::npos) break;
+
+		if(!isdigit(in[++next]))
+			stream << '%';
+		else
+		{
+			auto arg = atoi(&in[next]) % argc;
+			while(next < in.size() && isdigit(in[next])) ++next;
+
+			Print::PrintTemplate(stream, args[arg].first, args[arg].second, 0);
+		}
+	}
+}
+
 static void PrintFunc(IN_ARGS_16)
 {
 	Print::PrintTemplate(std::cout, W_ARGS_16);
@@ -206,6 +249,21 @@ static void PrettyPrinting(IN_ARGS_16, std::string *thisPointer)
 	new(thisPointer) std::string(ss.str());
 }
 
+static void asPrintFormat(std::string const& in, IN_ARGS_16)
+{
+	std::array<std::pair<void const*, int>, 16> args{A_ARGS_16};
+	Print::PrintFormat(std::cerr, in, args.data(), args.size());
+}
+
+/*
+static void ScanFormat(std::string const& in, IN_ARGS_16)
+{
+	std::array<std::pair<void const*, int>, 16> args{A_ARGS_16};
+
+	Print::ScanFormat(std::cout, W_ARGS_16);
+	std::cout << std::endl;
+}
+*/
 
 void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter)
 {
@@ -218,4 +276,7 @@ void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter
 
 	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+
+	r = engine->RegisterGlobalFunction("void Printf(string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+	//r = engine->RegisterGlobalFunction("void Scanf(string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 }
