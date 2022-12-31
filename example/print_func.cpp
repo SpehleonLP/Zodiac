@@ -12,6 +12,7 @@
 
 Print::PrintNonPrimitiveType* Print::g_PrintRegisteredType{&Print::PrintAddonTypes};
 Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
+class CScriptDictionary;
 
 #define INS_1 "?&in = null"
 #define INS_2 INS_1 ", " INS_1
@@ -56,6 +57,8 @@ Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 #define A_ARGS_8 A_ARGS_4 , A_ARG(4) , A_ARG(5) , A_ARG(6), A_ARG(7)
 #define A_ARGS_16 A_ARGS_8, A_ARG(8) , A_ARG(9) , A_ARG(10), A_ARG(11), A_ARG(12) , A_ARG(13) , A_ARG(14), A_ARG(15)
 
+extern void asToJSON_String(std::ostream & stream, CScriptDictionary const* dict, bool compressWhitespace);
+
 bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth)
 {
 	auto ctx = asGetActiveContext();
@@ -94,6 +97,19 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
 			}
 		}
 
+		return true;
+	}
+
+	if(strcmp(typeInfo->GetName(), "dictionary") == 0)
+	{
+		CScriptDictionary const* dictionary{};
+
+		if(typeId & asTYPEID_OBJHANDLE)
+			dictionary = *reinterpret_cast<CScriptDictionary * const*>(objPtr);
+		else
+			dictionary = reinterpret_cast<CScriptDictionary const*>(objPtr);
+
+		asToJSON_String(dst, dictionary, false);
 		return true;
 	}
 
