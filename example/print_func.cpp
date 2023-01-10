@@ -69,6 +69,7 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
 
 	if(stringTypeId == typeId)
 	{
+		auto & string = *((std::string const*)objPtr);
 		dst << *((std::string const*)objPtr);
 		return true;
 	}
