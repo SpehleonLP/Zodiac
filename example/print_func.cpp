@@ -272,6 +272,14 @@ static void asPrintFormat(std::string const& in, IN_ARGS_16)
 	Print::PrintFormat(std::cerr, in, args.data(), args.size());
 }
 
+static std::string PrettyPrintingF(std::string * This, IN_ARGS_16)
+{
+	std::array<std::pair<void const*, int>, 16> args{A_ARGS_16};
+	std::stringstream ss;
+	Print::PrintFormat(ss, *This, args.data(), args.size());
+	return ss.str();
+}
+
 /*
 static void ScanFormat(std::string const& in, IN_ARGS_16)
 {
@@ -289,6 +297,7 @@ void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter
 	if(registerStdStringFormatter)
 	{
 		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in, " INS_15 ")",    asFUNCTION(PrettyPrinting), asCALL_CDECL_OBJLAST); assert( r >= 0 );
+		r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
 	}
 
 	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
