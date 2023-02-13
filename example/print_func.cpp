@@ -14,7 +14,7 @@ Print::PrintNonPrimitiveType* Print::g_PrintRegisteredType{&Print::PrintAddonTyp
 Print::PrintNonPrimitiveType* Print::g_PrintScriptObjectType{nullptr};
 class CScriptDictionary;
 
-#define INS_1 "?&in = null"
+#define INS_1 "const ?&in = null"
 #define INS_2 INS_1 ", " INS_1
 #define INS_3 INS_2 ", " INS_1
 #define INS_4 INS_2 ", " INS_2
@@ -22,7 +22,7 @@ class CScriptDictionary;
 #define INS_15 INS_8 ", " INS_4 ", " INS_3
 #define INS_16 INS_8 ", " INS_8
 
-#define OUTS_1 "?&in = null"
+#define OUTS_1 "?&out = null"
 #define OUTS_2 OUTS_1 ", " OUTS_1
 #define OUTS_3 OUTS_2 ", " OUTS_1
 #define OUTS_4 OUTS_2 ", " OUTS_2
@@ -296,13 +296,13 @@ void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter
 
 	if(registerStdStringFormatter)
 	{
-		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in, " INS_15 ")",    asFUNCTION(PrettyPrinting), asCALL_CDECL_OBJLAST); assert( r >= 0 );
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_15 ")",    asFUNCTION(PrettyPrinting), asCALL_CDECL_OBJLAST); assert( r >= 0 );
 		r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
 	}
 
 	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 
-	r = engine->RegisterGlobalFunction("void Printf(string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+	r = engine->RegisterGlobalFunction("void Printf(const string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 	//r = engine->RegisterGlobalFunction("void Scanf(string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 }
