@@ -20,8 +20,8 @@ public:
 	~zCZodiacReader();
 
 	int GetModuleIndex(const char * name, uint32_t quickCheck = ~0u) const;
-	zCGlobalInfo const* GetGlobalVar(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
-	zCTypeInfo const* GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t * quickCheck = nullptr) const;
+	zCGlobalInfo const* GetGlobalVar(uint32_t _module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
+	zCTypeInfo const* GetTypeInfo(uint32_t _module, const char * name, const char * nameSpace, uint32_t * quickCheck = nullptr) const;
 	void GetProperties(int typeId, zCProperty const*& begin, zCProperty const*& end) const;
 	int  asGetProperty(asITypeInfo * typeInfo, const char * name, int * typeId, int from = 0) const;
 

@@ -114,28 +114,28 @@ void zCZodiacReader::Verify() const
 //  CHECK MODULES
 //----------------------
 	if(m_modules + moduleDataLength() > end)
-		throw Exception("module table", zE_BufferOverrun);
+		throw Exception("_module table", zE_BufferOverrun);
 
 	for(uint32_t i = 0; i < moduleDataLength(); ++i)
 	{
 		if(m_modules[i].name > stringTableLength())
 		{
-			throw Exception("name in module", zE_BufferOverrun);
+			throw Exception("name in _module", zE_BufferOverrun);
 		}
 
 		if(m_header->byteCodeOffset > m_modules[i].byteCodeOffset || m_modules[i].byteCodeOffset + m_modules[i].byteCodeLength > m_header->byteCodeOffset  + m_header->byteCodeByteLength)
 		{
-			throw Exception("byte code in module", zE_BufferOverrun);
+			throw Exception("byte code in _module", zE_BufferOverrun);
 		}
 
 		if(m_modules[i].beginTypeInfo + m_modules[i].typeInfoLength > typeInfoLength())
 		{
-			throw Exception("asTypeInfo in module", zE_BufferOverrun);
+			throw Exception("asTypeInfo in _module", zE_BufferOverrun);
 		}
 
 		if(m_modules[i].beginGlobalInfo + m_modules[i].globalsLength > globalsLength())
 		{
-			throw Exception("global variables in module", zE_BufferOverrun);
+			throw Exception("global variables in _module", zE_BufferOverrun);
 		}
 	}
 
@@ -158,9 +158,9 @@ void zCZodiacReader::Verify() const
 			throw Exception("delegate id in function", zE_BufferOverrun);
 		}
 
-		if(function.module > stringTableLength())
+		if(function._module > stringTableLength())
 		{
-			throw Exception("module id in function", zE_BufferOverrun);
+			throw Exception("_module id in function", zE_BufferOverrun);
 		}
 
 		if(function.objectType > typeTableLength())
@@ -265,9 +265,9 @@ void zCZodiacReader::Verify() const
 			throw Exception("namespace in template", zE_BufferOverrun);
 		}
 
-		if(_template.module > stringTableLength())
+		if(_template._module > stringTableLength())
 		{
-			throw Exception("module in template", zE_BufferOverrun);
+			throw Exception("_module in template", zE_BufferOverrun);
 		}
 
 		if(_template.declaration > stringTableLength())
@@ -380,14 +380,14 @@ bool zCZodiacReader::LoadByteCode(asIScriptEngine * engine)
 	{
 //		bool created = false;
 		auto moduleName = LoadString(m_modules[i].name);
-		asIScriptModule * module = engine->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
+		asIScriptModule * _module = engine->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
-		if(!module && m_modules[i].byteCodeLength != 0)
+		if(!_module && m_modules[i].byteCodeLength != 0)
 		{
-			module = engine->GetModule(moduleName, asGM_ALWAYS_CREATE);
+			_module = engine->GetModule(moduleName, asGM_ALWAYS_CREATE);
 
 			zIFileDescriptor::ReadSubFile sub_file(m_file, m_modules[i].byteCodeOffset, m_modules[i].byteCodeLength);
-			module->LoadByteCode(m_file, nullptr);
+			_module->LoadByteCode(m_file, nullptr);
 
 			loadedByteCode = true;
 		}
@@ -419,9 +419,9 @@ void zCZodiacReader::ProcessModules(asIScriptEngine * engine, bool loadedByteCod
 //solve typeinfo
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
-		asIScriptModule * module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
-		if(!module) throw Exception(zE_ModuleDoesNotExist);
-		SolveTypeInfo(module, i);
+		asIScriptModule * _module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
+		if(!_module) throw Exception(zE_ModuleDoesNotExist);
+		SolveTypeInfo(_module, i);
 	}
 
 	SolveTypeInfo(engine, moduleDataLength()-1);
@@ -480,13 +480,13 @@ void  zCZodiacReader::SolveTemplates(asIScriptEngine * engine)
 	{
 		asITypeInfo * typeInfo{};
 
-		if(!ti->module)
+		if(!ti->_module)
 			typeInfo = engine->GetTypeInfoByDecl(LoadString(ti->declaration));
 		else
 		{
-			asIScriptModule * module = engine->GetModule(LoadString(ti->module), asGM_ONLY_IF_EXISTS);
-			if(!module) throw Exception(zE_ModuleDoesNotExist);
-			typeInfo = module->GetTypeInfoByDecl(LoadString(ti->declaration));
+			asIScriptModule * _module = engine->GetModule(LoadString(ti->_module), asGM_ONLY_IF_EXISTS);
+			if(!_module) throw Exception(zE_ModuleDoesNotExist);
+			typeInfo = _module->GetTypeInfoByDecl(LoadString(ti->declaration));
 		}
 
 		if(!typeInfo)
@@ -542,12 +542,12 @@ int zCZodiacReader::GetModuleIndex(const char * name, uint32_t quickCheck) const
 	return -1;
 }
 
-zCGlobalInfo const* zCZodiacReader::GetGlobalVar(uint32_t module, const char * name, const char * nameSpace, uint32_t quickCheck) const
+zCGlobalInfo const* zCZodiacReader::GetGlobalVar(uint32_t _module, const char * name, const char * nameSpace, uint32_t quickCheck) const
 {
-	auto globals	= (zCGlobalInfo const*)(m_globals + m_modules[module].beginGlobalInfo);
-	auto global_end = globals + m_modules[module].globalsLength;
+	auto globals	= (zCGlobalInfo const*)(m_globals + m_modules[_module].beginGlobalInfo);
+	auto global_end = globals + m_modules[_module].globalsLength;
 
-	if(quickCheck < m_modules[module].globalsLength)
+	if(quickCheck < m_modules[_module].globalsLength)
 	{
 		if(strcmp(LoadString(globals[quickCheck].name), name)  == 0
 		&& strcmp(LoadString(globals[quickCheck].nameSpace), nameSpace)  == 0)
@@ -568,14 +568,14 @@ zCGlobalInfo const* zCZodiacReader::GetGlobalVar(uint32_t module, const char * n
 	return nullptr;
 }
 
-zCTypeInfo const* zCZodiacReader::GetTypeInfo(uint32_t module, const char * name, const char * nameSpace, uint32_t * quickCheck) const
+zCTypeInfo const* zCZodiacReader::GetTypeInfo(uint32_t _module, const char * name, const char * nameSpace, uint32_t * quickCheck) const
 {
-	auto typeInfo	= (m_typeInfo + m_modules[module].beginTypeInfo);
-	auto End		= typeInfo + m_modules[module].typeInfoLength;
+	auto typeInfo	= (m_typeInfo + m_modules[_module].beginTypeInfo);
+	auto End		= typeInfo + m_modules[_module].typeInfoLength;
 
 	if(nameSpace == nullptr) nameSpace = "";
 
-	if(quickCheck && *quickCheck < m_modules[module].typeInfoLength)
+	if(quickCheck && *quickCheck < m_modules[_module].typeInfoLength)
 	{
 		auto p = &typeInfo[*quickCheck];
 
@@ -1026,15 +1026,15 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 		func = typeInfo->GetMethodByDecl(declaration);
 
 	}
-	else if(function.module)
+	else if(function._module)
 	{
-		auto moduleName = LoadString(function.module);
-		auto module = GetEngine()->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
+		auto moduleName = LoadString(function._module);
+		auto _module = GetEngine()->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
-		if(!module)
+		if(!_module)
 			throw Exception(zE_ModuleDoesNotExist);
 
-		func = module->GetFunctionByDecl(declaration);
+		func = _module->GetFunctionByDecl(declaration);
 	}
 	else
 	{

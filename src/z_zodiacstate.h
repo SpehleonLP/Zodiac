@@ -18,7 +18,7 @@ struct zCFunction
 {
 	uint delegateAddress;
 	uint delegateTypeId;
-	uint module;
+	uint _module;
 	uint objectType;
 	uint declaration;
 //	uint nameSpace;
@@ -59,7 +59,7 @@ struct zCTemplate
 {
 	uint name;
 	uint nameSpace;
-	uint module;
+	uint _module;
 	uint declaration;
 };
 

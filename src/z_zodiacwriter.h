@@ -19,7 +19,7 @@ public:
 	zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps);
 	virtual ~zCZodiacWriter() = default;
 
-	void SaveModules(asIScriptEngine * module, bool saveByteCode, bool stripDebugInfo);
+	void SaveModules(asIScriptEngine * _module, bool saveByteCode, bool stripDebugInfo);
 
 	void ProcessQueue();
 
@@ -71,9 +71,9 @@ typedef std::pair<void const*, int> VoidIntPair;
 	void WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModule> & modules);
 	std::vector<zCTypeInfo> WriteProperties(asIScriptEngine * engine, std::vector<zCModule> & modules);
 
-	zCTypeInfo WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * module, asITypeInfo * type, bool registered);
+	zCTypeInfo WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * _module, asITypeInfo * type, bool registered);
 	void WriteScriptObject(const void * ptr, int typeId);
-	uint32_t GetByteLengthOfType(asIScriptEngine * engine, asIScriptModule * module, uint32_t typeId);
+	uint32_t GetByteLengthOfType(asIScriptEngine * engine, asIScriptModule * _module, uint32_t typeId);
 	uint32_t InsertString(const char * string);
 
 	zCZodiac		 *    m_parent;

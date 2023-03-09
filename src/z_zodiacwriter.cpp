@@ -397,8 +397,8 @@ void zCZodiacWriter::SaveModules(asIScriptEngine * engine, bool saveByteCode, bo
 
 	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
 	{
-		auto module = engine->GetModuleByIndex(i);
-		modules[i].name = SaveString(module->GetName());
+		auto _module = engine->GetModuleByIndex(i);
+		modules[i].name = SaveString(_module->GetName());
 	}
 
 	WriteByteCode(engine, modules, saveByteCode, stripDebugInfo);
@@ -530,7 +530,7 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 	return buffer;
 }
 
-zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * module, asITypeInfo * type, bool registered)
+zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * _module, asITypeInfo * type, bool registered)
 {
 	zCTypeInfo info;
 
@@ -560,7 +560,7 @@ zCTypeInfo zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, asIScriptModu
 			buffer.name = SaveString(name);
 			buffer.typeId = SaveTypeId(typeId);
 			buffer.offset = 0;
-			buffer.byteLength = GetByteLengthOfType(engine, module, typeId);
+			buffer.byteLength = GetByteLengthOfType(engine, _module, typeId);
 
 			m_propertiesList.push_back(buffer);
 		}
@@ -655,9 +655,9 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 
 	modules.back().globalsLength = (m_file->tell() - modules.back().beginGlobalInfo) / sizeof(zCGlobalInfo);
 
-	for(auto & module : modules)
+	for(auto & _module : modules)
 	{
-		module.beginGlobalInfo = (module.beginGlobalInfo - origin) / sizeof(zCGlobalInfo);
+		_module.beginGlobalInfo = (_module.beginGlobalInfo - origin) / sizeof(zCGlobalInfo);
 	}
 }
 
@@ -781,7 +781,7 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 		auto typeInfo = GetEngine()->GetTypeInfoById(typeId);
 		if(typeInfo == nullptr) throw Exception(zE_BadTypeId);
 
-		auto module = typeInfo->GetModule();
+		auto _module = typeInfo->GetModule();
 
 		const char * name = typeInfo->GetName();
 		const char * nameSpace = typeInfo->GetNamespace();
@@ -790,7 +790,7 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 		ttypeInfo.name	      = SaveString(typeInfo->GetName());
 		ttypeInfo.nameSpace   = SaveString(typeInfo->GetNamespace());
 		ttypeInfo.declaration = SaveString(declaration);
-		ttypeInfo.module      = module? SaveString(module->GetName()) : 0;
+		ttypeInfo._module      = _module? SaveString(_module->GetName()) : 0;
 
 		m_ttypeList.push_back(typeId);
 		m_templates.push_back(ttypeInfo);
@@ -835,7 +835,7 @@ int zCZodiacWriter::SaveFunction(asIScriptFunction const* func)
 	auto type = func->GetDelegateObjectType();
 	void * obj = func->GetDelegateObject();
 	auto delegate = func->GetDelegateFunction();
-	auto module   = func->GetModule();
+	auto _module   = func->GetModule();
 
 	if(delegate != nullptr)
 		func = delegate;
@@ -845,7 +845,7 @@ int zCZodiacWriter::SaveFunction(asIScriptFunction const* func)
 
 	function.delegateAddress = type? SaveScriptObject(obj, type->GetTypeId(), nullptr) : 0;
 	function.delegateTypeId = SaveTypeInfo(type);
-	function.module         = module? SaveString(module->GetName()) : 0;
+	function._module         = _module? SaveString(_module->GetName()) : 0;
 	function.objectType     = SaveTypeInfo(func->GetObjectType());
 	function.declaration    = SaveString(func->GetDeclaration(false, true, false));
 
