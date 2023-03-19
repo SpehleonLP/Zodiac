@@ -221,7 +221,7 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 	return;
 }
 
-void Print::PrintFormat(std::ostream & stream, std::string const& in, std::pair<void const*, int> const* args, int argc)
+void Print::PrintFormat(std::ostream & stream, std::string_view in, std::pair<void const*, int> const* args, int argc)
 {
 	if(argc <= 0)
 	{
@@ -281,7 +281,7 @@ static std::string PrettyPrintingF(std::string * This, IN_ARGS_16)
 }
 
 /*
-static void ScanFormat(std::string const& in, IN_ARGS_16)
+static void ScanFormat(std::string_view in, IN_ARGS_16)
 {
 	std::array<std::pair<void const*, int>, 16> args{A_ARGS_16};
 
@@ -304,5 +304,5 @@ void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter
 	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 
 	r = engine->RegisterGlobalFunction("void Printf(const string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
-	//r = engine->RegisterGlobalFunction("void Scanf(string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+	//r = engine->RegisterGlobalFunction("void Scanf(const string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 }

@@ -222,7 +222,7 @@ struct zIFileDescriptor::ReadSubFile
 {
 	ReadSubFile() = delete;
 	ReadSubFile(zIFileDescriptor * parent, uint offset, uint length) : parent(parent) { parent->PushSubFile(offset, length); }
-	ReadSubFile(ReadSubFile const &) = delete;
+	ReadSubFile(ReadSubFile const&) = delete;
 	ReadSubFile(ReadSubFile && it) : parent(it.parent) { it.parent = nullptr; }
 	~ReadSubFile() { if(parent) parent->PopSubFile(); }
 
