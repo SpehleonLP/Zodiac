@@ -221,7 +221,7 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 	return;
 }
 
-void Print::PrintFormat(std::ostream & stream, std::string_view in, std::pair<void const*, int> const* args, int argc)
+void Print::PrintFormat(std::ostream & stream, std::string const& in, std::pair<void const*, int> const* args, int argc)
 {
 	if(argc <= 0)
 	{
@@ -281,7 +281,7 @@ static std::string PrettyPrintingF(std::string * This, IN_ARGS_16)
 }
 
 /*
-static void ScanFormat(std::string_view in, IN_ARGS_16)
+static void ScanFormat(std::string const& in, IN_ARGS_16)
 {
 	std::array<std::pair<void const*, int>, 16> args{A_ARGS_16};
 

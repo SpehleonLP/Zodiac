@@ -24,7 +24,7 @@ extern PrintNonPrimitiveType* g_PrintRegisteredType;
 extern PrintNonPrimitiveType* g_PrintScriptObjectType;
 
 void PrintTemplate(std::ostream & dst, void const *objPtr, int typeId, int depth = 0);
-void PrintFormat(std::ostream & stream, std::string_view in, std::pair<void const*, int> const* args, int argc);
+void PrintFormat(std::ostream & stream, std::string const& in, std::pair<void const*, int> const* args, int argc);
 
 //currently only string and array
 bool PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth);
