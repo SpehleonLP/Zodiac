@@ -123,16 +123,16 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 	{
 	case asTYPEID_VOID:		return;
 	case asTYPEID_BOOL:		dst << ((*(bool const*)objPtr)? "true" : "false"); return;
-	case asTYPEID_INT8:		dst <<  *(int8_t   const*)objPtr; return;
-	case asTYPEID_INT16:	dst <<  *(int16_t  const*)objPtr; return;
-	case asTYPEID_INT32:	dst << 	*(int32_t  const*)objPtr; return;
-	case asTYPEID_INT64:	dst << 	*(int64_t  const*)objPtr; return;
-	case asTYPEID_UINT8:	dst <<  *(uint8_t  const*)objPtr; return;
-	case asTYPEID_UINT16:	dst <<  *(uint16_t const*)objPtr; return;
-	case asTYPEID_UINT32:	dst << 	*(uint32_t const*)objPtr; return;
-	case asTYPEID_UINT64:	dst << 	*(uint64_t const*)objPtr; return;
-	case asTYPEID_FLOAT:	dst << *(float    const*)objPtr; return;
-	case asTYPEID_DOUBLE:	dst <<  *(double   const*)objPtr; return;
+	case asTYPEID_INT8:		dst <<  (int64_t)*(int8_t   const*)objPtr; return;
+	case asTYPEID_INT16:	dst <<  (int64_t)*(int16_t  const*)objPtr; return;
+	case asTYPEID_INT32:	dst << 	(int64_t)*(int32_t  const*)objPtr; return;
+	case asTYPEID_INT64:	dst << 	(int64_t)*(int64_t  const*)objPtr; return;
+	case asTYPEID_UINT8:	dst <<  (uint64_t)*(uint8_t  const*)objPtr; return;
+	case asTYPEID_UINT16:	dst <<  (uint64_t)*(uint16_t const*)objPtr; return;
+	case asTYPEID_UINT32:	dst <<  (uint64_t)*(uint32_t const*)objPtr; return;
+	case asTYPEID_UINT64:	dst <<  (uint64_t)*(uint64_t const*)objPtr; return;
+	case asTYPEID_FLOAT:	dst <<  (double)*(float    const*)objPtr; return;
+	case asTYPEID_DOUBLE:	dst <<  (double)*(double   const*)objPtr; return;
 	default: break;
 	}
 
