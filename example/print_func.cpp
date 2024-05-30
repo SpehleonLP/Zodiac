@@ -280,11 +280,12 @@ static void asPrintFormat(asIScriptGeneric * generic)
 	Print::PrintFormat(std::cerr, *(std::string*)generic->GetArgObject(0), generic, 1);
 }
 
-static std::string PrettyPrintingF(asIScriptGeneric * generic)
+static void PrettyPrintingF(asIScriptGeneric * generic)
 {
     std::stringstream ss;
 	Print::PrintFormat(ss, *(std::string*)generic->GetObject(), generic, 0);
-    return ss.str();
+	std::string result = ss.str();
+	generic->SetReturnObject(&result);
 }
 
 /*
@@ -299,17 +300,17 @@ static void ScanFormat(std::string const& in, IN_ARGS_16)
 
 void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter)
 {
-    int r;
+	union { int r; asERetCodes code; };
 
     if(registerStdStringFormatter)
     {
-        r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_15 ")",    asFUNCTION(PrettyPrinting), asCALL_CDECL_OBJLAST); assert( r >= 0 );
-        r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_CDECL_OBJFIRST); assert( r >= 0 );
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_15 ")",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
     }
 
 	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
-    r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
 
-	r = engine->RegisterGlobalFunction("void Printf(const string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+	r = engine->RegisterGlobalFunction("void Printf(const string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
     //r = engine->RegisterGlobalFunction("void Scanf(const string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
 }
