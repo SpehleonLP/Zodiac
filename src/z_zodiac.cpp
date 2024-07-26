@@ -304,9 +304,9 @@ void zCZodiac::SortTypeList()
 			if(0 == (typeId->GetFlags() & asOBJ_POD))
 			{
 				if(typeId->GetNamespace())
-					throw lifaundi_exception(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName());
+					throw std::logic_error(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName());
 				else
-					throw lifaundi_exception(std::string("Missing entry for loading/saving ") + typeId->GetName());
+					throw std::logic_error(std::string("Missing entry for loading/saving ") + typeId->GetName());
 			}
 
 			TypeEntry entry;
