@@ -37,7 +37,7 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
     if(!ctx) return false;
     auto engine = ctx->GetEngine();
 
-    int stringTypeId = engine->GetStringFactoryReturnTypeId();
+	int stringTypeId = engine->GetStringFactory(nullptr, nullptr);
 
     if(stringTypeId == typeId)
     {
