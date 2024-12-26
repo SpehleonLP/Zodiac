@@ -113,6 +113,11 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
 
 void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, int depth)
 {
+	if(typeId& asTYPEID_OBJHANDLE)
+	{
+		dst << *(void**)objPtr;
+		return;
+	}
     switch(typeId)
     {
     case asTYPEID_VOID:		return;
