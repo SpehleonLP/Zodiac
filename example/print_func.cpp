@@ -31,6 +31,7 @@ class CScriptDictionary;
 #define OUTS_15 OUTS_8 ", " OUTS_4 ", " OUTS_3
 #define OUTS_16 OUTS_8 ", " OUTS_8
 
+
 bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth)
 {
     auto ctx = asGetActiveContext();
