@@ -116,7 +116,13 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 {
 	if(typeId& asTYPEID_OBJHANDLE)
 	{
-		dst << *(void**)objPtr;
+		objPtr = *(void**)objPtr;
+		
+		if(objPtr)
+			dst << *(void**)objPtr;
+		else 
+			dst << "null";
+			
 		return;
 	}
     switch(typeId)
@@ -154,6 +160,24 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
         return;
     }
 
+    if(typeId & asTYPEID_SCRIPTOBJECT)
+    {
+        if(g_PrintScriptObjectType && g_PrintScriptObjectType(dst, objPtr, typeId, depth))
+            return;
+
+        if(typeId & asTYPEID_OBJHANDLE)
+        {
+            dst << "@" << typeInfo->GetName() << "(" <<  *(void**)objPtr << ")";
+        }
+        else
+        {
+            dst << typeInfo->GetName() << "(" <<  objPtr << ")";
+        }
+    }
+
+	if(g_PrintRegisteredType && g_PrintRegisteredType(dst, objPtr, typeId, depth))
+		return;
+		
     if(typeInfo->GetFuncdefSignature())
     {
         auto func = reinterpret_cast<asIScriptFunction const*>(objPtr);
@@ -182,40 +206,13 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
         return;
     }
 
-    if(typeId & asTYPEID_SCRIPTOBJECT)
-    {
-        if(g_PrintScriptObjectType && g_PrintScriptObjectType(dst, objPtr, typeId, depth))
-            return;
-
-        if(typeId & asTYPEID_OBJHANDLE)
-        {
-            dst << "@" << typeInfo->GetName() << "(" <<  *(void**)objPtr << ")";
-        }
-        else
-        {
-            dst << typeInfo->GetName() << "(" <<  objPtr << ")";
-        }
-    }
-
+          
     if(typeId & (asTYPEID_APPOBJECT|asTYPEID_TEMPLATE))
     {
-        if(g_PrintRegisteredType != nullptr)
-        {
-            if(typeId & asTYPEID_OBJHANDLE)
-            {
-                typeId &= ~(asTYPEID_OBJHANDLE|asTYPEID_HANDLETOCONST);
-                objPtr = *(void**)objPtr;
-            }
-
-            if(g_PrintRegisteredType(dst, objPtr, typeId, depth))
-                return;
-        }
-
         dst << "RegisteredObject";
-
         return;
     }
-
+      
     dst << "UNKNOWN";
 
     return;
