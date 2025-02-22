@@ -17,20 +17,9 @@ class CScriptDictionary;
 
 #define INS_1 "const ?&in = null"
 #define INS_2 INS_1 ", " INS_1
-#define INS_3 INS_2 ", " INS_1
 #define INS_4 INS_2 ", " INS_2
 #define INS_8 INS_4 ", " INS_4
-#define INS_15 INS_8 ", " INS_4 ", " INS_3
 #define INS_16 INS_8 ", " INS_8
-
-#define OUTS_1 "?&out = null"
-#define OUTS_2 OUTS_1 ", " OUTS_1
-#define OUTS_3 OUTS_2 ", " OUTS_1
-#define OUTS_4 OUTS_2 ", " OUTS_2
-#define OUTS_8 OUTS_4 ", " OUTS_4
-#define OUTS_15 OUTS_8 ", " OUTS_4 ", " OUTS_3
-#define OUTS_16 OUTS_8 ", " OUTS_8
-
 
 bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth)
 {
@@ -115,9 +104,7 @@ bool Print::PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, 
 void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, int depth)
 {
 	if(typeId& asTYPEID_OBJHANDLE)
-	{
-		objPtr = *(void**)objPtr;
-		
+	{		
 		if(objPtr)
 			dst << *(void**)objPtr;
 		else 
@@ -307,7 +294,7 @@ void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter
 
     if(registerStdStringFormatter)
     {
-		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_15 ")",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_16 ")",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
 		r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
     }
 
