@@ -1,7 +1,7 @@
 #include "print_func.h"
 #include <string>
+#include "AngelScript/ScriptJson/scriptjson.h"
 #include "add_on/scriptarray/scriptarray.h"
-#include "add_on/scriptdictionary/scriptdictionary.h"
 #include <cstring>
 #include <angelscript.h>
 #include <cinttypes>
