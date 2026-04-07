@@ -1,4 +1,5 @@
 #include "print_func.h"
+#include "AngelScript/asregistration.h"
 #include <string>
 #include "AngelScript/ScriptJson/scriptjson.h"
 #include "add_on/scriptarray/scriptarray.h"
@@ -288,19 +289,20 @@ static void ScanFormat(std::string const& in, IN_ARGS_16)
 }
 */
 
-void Print::asRegister(asIScriptEngine * engine, bool registerStdStringFormatter)
+int Print::asRegister(asRegistration & reg)
 {
-	union { int r; asERetCodes code; };
+	reg.Defer([](asRegistration& reg) {
+		auto* engine = reg.GetEngine();
+		union { int r; asERetCodes code; };
 
-    if(registerStdStringFormatter)
-    {
-		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, " INS_16 ")",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
-		r = engine->RegisterObjectMethod("string", "string format(" INS_16 ") const",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
-    }
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, ...)",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterObjectMethod("string", "string format(...) const",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
 
-	r = engine->RegisterGlobalFunction("void Print(" INS_16 ")", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
-	r = engine->RegisterGlobalFunction("void Println(" INS_16 ")", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
+		r = engine->RegisterGlobalFunction("void Print(...)", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r >= 0);
+		r = engine->RegisterGlobalFunction("void Println(...)", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r >= 0);
 
-	r = engine->RegisterGlobalFunction("void Printf(const string &in format, " INS_16 ")", asFUNCTION(asPrintFormat), asCALL_GENERIC);  assert(r == asALREADY_REGISTERED || r >= 0);
-    //r = engine->RegisterGlobalFunction("void Scanf(const string &in format, " OUTS_16 ")", asFUNCTION(ScanFormat), asCALL_CDECL);  assert(r == asALREADY_REGISTERED || r >= 0);
+		r = engine->RegisterGlobalFunction("void Printf(const string &in format, ...)", asFUNCTION(asPrintFormat), asCALL_GENERIC);  assert(r >= 0);
+	});
+
+	return 0;
 }

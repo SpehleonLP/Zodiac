@@ -9,6 +9,8 @@ class asIScriptEngine;
 class asIScriptGeneric;
 #endif
 
+class asRegistration;
+
 namespace Print
 {
 #if AS_USE_NAMESPACE
@@ -32,7 +34,7 @@ void PrintTemplate(std::ostream & stream, asIScriptGeneric * generic, int offset
 bool PrintAddonTypes(std::ostream & dst, void const *objPtr, int typeId, int depth);
 
 
-void asRegister( asIScriptEngine * engine, bool registerStdStringFormatter = true);
+int asRegister(asRegistration & reg);
 
 };
 
