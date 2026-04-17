@@ -245,7 +245,6 @@ void Print::PrintTemplate(std::ostream & stream, asIScriptGeneric * generic, int
 		if(typeId)
 			PrintTemplate(stream, ref, typeId, 0);
 	}
-
 }
 
 static void PrintFunc(asIScriptGeneric * generic)
@@ -274,7 +273,7 @@ static void asPrintFormat(asIScriptGeneric * generic)
 static void PrettyPrintingF(asIScriptGeneric * generic)
 {
     std::stringstream ss;
-	Print::PrintFormat(ss, *(std::string*)generic->GetObject(), generic, 0);
+	Print::PrintFormat(ss, *(std::string*)generic->GetArgObject(0), generic, 1);
 	std::string result = ss.str();
 	generic->SetReturnObject(&result);
 }
@@ -296,7 +295,7 @@ int Print::asRegister(asRegistration & reg)
 		union { int r; asERetCodes code; };
 
 		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in, &?in...)",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
-		r = engine->RegisterObjectMethod("string", "string format(&?in...) const",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterGlobalFunction("string format(const string &in, &?in...)",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
 
 		r = engine->RegisterGlobalFunction("void Print(&?in...)", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r >= 0);
 		r = engine->RegisterGlobalFunction("void Println(&?in...)", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r >= 0);
