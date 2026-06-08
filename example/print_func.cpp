@@ -207,29 +207,39 @@ void Print::PrintTemplate(std::ostream & dst, void const* objPtr, int typeId, in
 }
 
 void Print::PrintFormat(std::ostream & stream, std::string const& in, asIScriptGeneric * generic, int offset)
-{
+{ 
 	int argc = generic->GetArgCount() - offset;
     if(argc <= 0)
     {
         stream << in;
         return;
     }
-
-	for(size_t itr = 0, next = 0; itr < in.size(); itr = next)
+    for(size_t itr = 0, next = 0; itr < in.size(); itr = next)
     {
-        next = in.find_first_of('%', itr);
-        stream << in.substr(itr, next-itr);
-
+        next = in.find_first_of('{', itr);
+        stream << in.substr(itr, next - itr);
         if(next == std::string::npos) break;
 
-        if(!isdigit(in[++next]))
-            stream << '%';
+        // Handle escaped brace '{{'
+        if(next + 1 < in.size() && in[next + 1] == '{')
+        {
+            stream << '{';
+            next += 2;
+            continue;
+        }
+
+        size_t close = in.find_first_of('}', next + 1);
+        if(close == std::string::npos || !isdigit(in[next + 1]))
+        {
+            // Not a valid placeholder, emit literally
+            stream << '{';
+            next += 1;
+        }
         else
         {
-            auto arg = atoi(&in[next]) % argc;
-            while(next < in.size() && isdigit(in[next])) ++next;
-
-			Print::PrintTemplate(stream, generic->GetArgAddress(offset+arg), generic->GetArgTypeId(offset+arg), 0);
+            auto arg = atoi(&in[next + 1]) % argc;
+            next = close + 1;
+            Print::PrintTemplate(stream, generic->GetArgAddress(offset + arg), generic->GetArgTypeId(offset + arg), 0);
         }
     }
 }
@@ -298,7 +308,10 @@ int Print::asRegister(asRegistration & reg)
 		reg.GetEngine()->SetDefaultNamespace("");
 	
 		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in...)",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		
+		reg.GetEngine()->SetDefaultNamespace("string");
 		r = engine->RegisterGlobalFunction("string format(const string &in format, ?&in...)",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
+		reg.GetEngine()->SetDefaultNamespace("");
 
 		r = engine->RegisterGlobalFunction("void Print(?&in...)", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r >= 0);
 		r = engine->RegisterGlobalFunction("void Println(?&in...)", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r >= 0);
