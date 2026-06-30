@@ -307,7 +307,7 @@ int Print::asRegister(asRegistration & reg)
 		reg.GetEngine()->SetDefaultAccessMask(AccessMask_Strings);
 		reg.GetEngine()->SetDefaultNamespace("");
 	
-		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in...)",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in...) explicit",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
 		
 		reg.GetEngine()->SetDefaultNamespace("string");
 		r = engine->RegisterGlobalFunction("string format(const string &in format, ?&in...)",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
