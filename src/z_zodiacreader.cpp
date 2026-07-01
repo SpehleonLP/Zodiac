@@ -22,15 +22,26 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_progress(progress),
 	m_totalSteps(total_steps)
 {
+	// Trust boundary. The header lives in the file's trailer; a file shorter than
+	// the header would make the pointer computation below underflow, so guard it
+	// BEFORE forming m_header (fixes the short-file pointer underflow).
+	if(m_mmap.GetLength() < sizeof(zCHeader))
+		throw Exception("file smaller than header", zE_BadFileType);
+
 	m_header = (zCHeader const*)(m_mmap.GetAddress() + (m_mmap.GetLength() - sizeof(zCHeader)));
 
-	m_stringTable		= (char const *)(m_mmap.GetAddress() + m_header->stringTableOffset);
-	m_entries			= (zCEntry const*)(m_mmap.GetAddress() + m_header->addressTableOffset);
-	m_modules			= (zCModule const*)(m_mmap.GetAddress() + m_header->moduleDataOffset);
-	m_typeInfo			= (zCTypeInfo const*)(m_mmap.GetAddress() + m_header->typeInfoOffset);
-	m_globals			= (zCGlobalInfo const*)(m_mmap.GetAddress() + m_header->globalsOffset);
-
+	// Verify() validates every file-supplied offset, length and index field
+	// before any table is walked. It uses only the Get*() accessors (which
+	// recompute from m_header), so it is safe to run before the member table
+	// pointers below are formed.
 	Verify();
+
+	// Every table offset is now proven in-range; forming the base pointers is safe.
+	m_stringTable		= GetStringTable();
+	m_entries			= GetEntries();
+	m_modules			= GetModules();
+	m_typeInfo			= GetTypeInfo();
+	m_globals			= GetGlobals();
 
 	m_loadedObjects.reset(new LoadedInfo[addressTableLength()]);
 	memset(&m_loadedObjects[0], 0, addressTableLength() * sizeof(LoadedInfo));
@@ -60,219 +71,246 @@ zCZodiacReader::~zCZodiacReader()
 	}
 }
 
+bool zCZodiacReader::InFile(uint64_t offset, uint64_t count, uint64_t elemSize, uint64_t fileLen)
+{
+	// count and elemSize both originate from 32-bit header fields / small sizeofs,
+	// so bytes and offset+bytes cannot overflow uint64_t.
+	uint64_t bytes = count * elemSize;
+	return offset <= fileLen && bytes <= fileLen - offset;
+}
+
 void zCZodiacReader::Verify() const
 {
-	void * end = (void*)(m_mmap.GetAddress() + m_mmap.GetLength());
+	const uint64_t fileLen = m_mmap.GetLength();
 
+	// A byte offset into the string table is valid iff it is a real index; the
+	// terminal-NUL guarantee below then bounds the string that starts there.
+	// (>= rejection: an index == length is out of range.)
+	auto badStr = [&](uint32_t idx) { return idx >= stringTableLength(); };
+
+//-----------------------
+//  HEADER SELF-CONSISTENCY
+//-----------------------
 	zCHeader check;
 
 	if(strncmp(check.magic, m_header->magic, sizeof(check.magic)) != 0)
 		throw Exception("Not a zodiac file.", zE_BadFileType);
 
-	if(m_header->saveDataByteOffset + saveDataByteLength() >  m_mmap.GetLength())
-		throw Exception("save data", zE_BufferOverrun);
+	if(m_header->pointerSize != check.pointerSize
+	|| m_header->boolSize    != check.boolSize
+	|| m_header->isBigEndian != check.isBigEndian)
+		throw Exception("incompatible file format (pointer/bool size or endianness)", zE_BadFileType);
 
 //-----------------------
-//  CHECK STRINGS
-//----------------------
-	if(GetStringAddresses() + stringAddressCount() > end)
-		throw Exception("string entry", zE_BufferOverrun);
-
-	if(m_stringTable + stringTableLength() > end)
+//  TABLE RANGES (start AND end validated, overflow-safe)
+//-----------------------
+	if(!InFile(m_header->saveDataByteOffset,  saveDataByteLength(),   1,                   fileLen))
+		throw Exception("save data", zE_BufferOverrun);
+	if(!InFile(m_header->stringAddressOffset, stringAddressCount(),   sizeof(uint32_t),    fileLen))
+		throw Exception("string addresses", zE_BufferOverrun);
+	if(!InFile(m_header->stringTableOffset,   stringTableLength(),    1,                   fileLen))
 		throw Exception("string table", zE_BufferOverrun);
+	if(!InFile(m_header->addressTableOffset,  addressTableLength(),   sizeof(zCEntry),     fileLen))
+		throw Exception("address table", zE_BufferOverrun);
+	if(!InFile(m_header->savedObjectOffset,   m_header->savedObjectLength, 1,              fileLen))
+		throw Exception("saved objects", zE_BufferOverrun);
+	if(!InFile(m_header->moduleDataOffset,    moduleDataLength(),     sizeof(zCModule),    fileLen))
+		throw Exception("module table", zE_BufferOverrun);
+	if(!InFile(m_header->typeInfoOffset,      typeInfoLength(),       sizeof(zCTypeInfo),  fileLen))
+		throw Exception("type info", zE_BufferOverrun);
+	if(!InFile(m_header->propertiesOffset,    propertiesLength(),     sizeof(zCProperty),  fileLen))
+		throw Exception("properties", zE_BufferOverrun);
+	if(!InFile(m_header->globalsOffset,       globalsLength(),        sizeof(zCGlobalInfo),fileLen))
+		throw Exception("globals", zE_BufferOverrun);
+	if(!InFile(m_header->functionTableOffset, functionTableLength(),  sizeof(zCFunction),  fileLen))
+		throw Exception("function table", zE_BufferOverrun);
+	if(!InFile(m_header->templatesOffset,     templatesLength(),      sizeof(zCTemplate),  fileLen))
+		throw Exception("templates", zE_BufferOverrun);
+	if(!InFile(m_header->byteCodeOffset,      m_header->byteCodeByteLength, 1,             fileLen))
+		throw Exception("byte code", zE_BufferOverrun);
 
+//-----------------------
+//  STRING TABLE MUST BE NUL-TERMINATED AT ITS FINAL BYTE
+//  (guarantees every string that starts at a valid index ends inside the table)
+//-----------------------
+	if(stringTableLength() != 0 && GetStringTable()[stringTableLength() - 1] != '\0')
+		throw Exception("string table not NUL-terminated", zE_BufferOverrun);
+
+//-----------------------
+//  AT LEAST ONE MODULE (the last entry is the engine's global module; the module
+//  loops index moduleDataLength()-1, which underflows if the count is zero)
+//-----------------------
+	if(moduleDataLength() == 0)
+		throw Exception("no module records", zE_BufferOverrun);
+
+//-----------------------
+//  CHECK STRING ADDRESSES
+//-----------------------
 	for(uint32_t i = 0; i < stringAddressCount(); ++i)
 	{
-		if(GetStringAddresses()[i] > stringTableLength())
-		{
+		if(badStr(GetStringAddresses()[i]))
 			throw Exception("string address", zE_BufferOverrun);
-		}
-	}
-
-//-----------------------
-//  CHECK ENTRIES
-//----------------------
-	if(m_entries + addressTableLength() > end)
-		throw Exception("address table", zE_BufferOverrun);
-
-	for(uint32_t i = 0; i < addressTableLength(); ++i)
-	{
-		if(m_header->savedObjectOffset > m_entries[i].offset)
-		{
-			throw Exception("entry save location", zE_BufferOverrun);
-		}
-
-		uint32_t entry_end = (m_entries[i].offset + m_entries[i].byteLength) - m_header->savedObjectOffset;
-
-		if(entry_end > m_header->savedObjectLength)
-		{
-			throw Exception("entry save size", zE_BufferOverrun);
-		}
 	}
 
 //-----------------------
 //  CHECK MODULES
-//----------------------
-	if(m_modules + moduleDataLength() > end)
-		throw Exception("_module table", zE_BufferOverrun);
-
+//-----------------------
 	for(uint32_t i = 0; i < moduleDataLength(); ++i)
 	{
-		if(m_modules[i].name > stringTableLength())
-		{
-			throw Exception("name in _module", zE_BufferOverrun);
-		}
+		auto & _module = GetModules()[i];
 
-		if(m_header->byteCodeOffset > m_modules[i].byteCodeOffset || m_modules[i].byteCodeOffset + m_modules[i].byteCodeLength > m_header->byteCodeOffset  + m_header->byteCodeByteLength)
-		{
-			throw Exception("byte code in _module", zE_BufferOverrun);
-		}
+		if(badStr(_module.name))
+			throw Exception("name in module", zE_BufferOverrun);
 
-		if(m_modules[i].beginTypeInfo + m_modules[i].typeInfoLength > typeInfoLength())
-		{
-			throw Exception("asTypeInfo in _module", zE_BufferOverrun);
-		}
+		if(m_header->byteCodeOffset > _module.byteCodeOffset
+		|| (uint64_t)_module.byteCodeOffset + _module.byteCodeLength
+		     > (uint64_t)m_header->byteCodeOffset + m_header->byteCodeByteLength)
+			throw Exception("byte code in module", zE_BufferOverrun);
 
-		if(m_modules[i].beginGlobalInfo + m_modules[i].globalsLength > globalsLength())
-		{
-			throw Exception("global variables in _module", zE_BufferOverrun);
-		}
+		if((uint64_t)_module.beginTypeInfo + _module.typeInfoLength > typeInfoLength())
+			throw Exception("type info in module", zE_BufferOverrun);
+
+		if((uint64_t)_module.beginGlobalInfo + _module.globalsLength > globalsLength())
+			throw Exception("globals in module", zE_BufferOverrun);
 	}
 
 //-----------------------
 //  CHECK Functions
-//----------------------
-	if(GetFunctions() + functionTableLength() > end)
-		throw Exception("function table", zE_BufferOverrun);
-
+//-----------------------
 	for(uint32_t i = 0; i < functionTableLength(); ++i)
 	{
 		auto & function = GetFunctions()[i];
-		if(function.delegateAddress > addressTableLength())
-		{
+
+		if(function.delegateAddress >= addressTableLength())
 			throw Exception("entry id in function", zE_BufferOverrun);
-		}
 
-		if(function.delegateTypeId > typeInfoLength())
-		{
+		if(function.delegateTypeId >= typeTableLength())
 			throw Exception("delegate id in function", zE_BufferOverrun);
-		}
 
-		if(function._module > stringTableLength())
-		{
-			throw Exception("_module id in function", zE_BufferOverrun);
-		}
+		if(badStr(function._module))
+			throw Exception("module id in function", zE_BufferOverrun);
 
-		if(function.objectType > typeTableLength())
-		{
+		if(function.objectType >= typeTableLength())
 			throw Exception("typeId in function", zE_BufferOverrun);
-		}
 
-		if(function.declaration > stringTableLength())
-		{
+		if(badStr(function.declaration))
 			throw Exception("declaration in function", zE_BufferOverrun);
-		}
-
 	}
 
 //-----------------------
 //  CHECK Globals
-//----------------------
-	if(m_globals + globalsLength() > end)
-		throw Exception("global variables", zE_BufferOverrun);
-
+//-----------------------
 	for(uint32_t i = 0; i < globalsLength(); ++i)
 	{
-		if(m_globals[i].name > stringTableLength())
-		{
+		auto & global = GetGlobals()[i];
+
+		if(badStr(global.name))
 			throw Exception("name in global", zE_BufferOverrun);
-		}
 
-		if(m_globals[i].nameSpace > stringTableLength())
-		{
+		if(badStr(global.nameSpace))
 			throw Exception("namespace in global", zE_BufferOverrun);
-		}
 
-		if(m_globals[i].address > addressTableLength())
-		{
+		if(global.address >= addressTableLength())
 			throw Exception("entry id in global", zE_BufferOverrun);
-		}
 	}
 
 //-----------------------
 //  CHECK TypeInfo
-//----------------------
-	if(m_typeInfo + typeInfoLength() > end)
-		throw Exception("type info", zE_BufferOverrun);
-
+//-----------------------
 	for(uint32_t i = 0; i < typeInfoLength(); ++i)
 	{
-		auto & typeInfo = m_typeInfo[i];
+		auto & typeInfo = GetTypeInfo()[i];
 
-		if(typeInfo.name > stringTableLength())
-		{
+		if(badStr(typeInfo.name))
 			throw Exception("name in typeInfo", zE_BufferOverrun);
-		}
 
-		if(typeInfo.nameSpace > stringTableLength())
-		{
+		if(badStr(typeInfo.nameSpace))
 			throw Exception("namespace in typeInfo", zE_BufferOverrun);
-		}
 
-		if(typeInfo.propertiesBegin + typeInfo.propertiesLength > propertiesLength())
-		{
+		if((uint64_t)typeInfo.propertiesBegin + typeInfo.propertiesLength > propertiesLength())
 			throw Exception("properties in typeInfo", zE_BufferOverrun);
-		}
 	}
 
 //-----------------------
 //  CHECK Properties
-//----------------------
+//-----------------------
 	zCProperty const* pBegin, * pEnd;
 	GetProperties(-1, pBegin, pEnd);
 
 	for(auto p = pBegin; p < pEnd; ++p)
 	{
-		if(p->name > stringTableLength())
-		{
+		if(badStr(p->name))
 			throw Exception("name in property", zE_BufferOverrun);
-		}
 
 		if( p->typeId & asTYPEID_MASK_OBJECT
-		&& (p->typeId & asTYPEID_MASK_SEQNBR) > typeTableLength())
-		{
+		&& (p->typeId & asTYPEID_MASK_SEQNBR) >= typeTableLength())
 			throw Exception("typeId in property", zE_BufferOverrun);
-		}
+
+		if(p->byteLength < 0)
+			throw Exception("negative property byte length", zE_BufferOverrun);
 	}
 
 //-----------------------
 //  CHECK Templates
-//----------------------
-	if(GetTemplates() + templatesLength() > end)
-		throw Exception("templates", zE_BufferOverrun);
-
+//-----------------------
 	for(uint32_t i = 0; i < templatesLength(); ++i)
 	{
 		auto & _template = GetTemplates()[i];
 
-		if(_template.name > stringTableLength())
-		{
+		if(badStr(_template.name))
 			throw Exception("name in template", zE_BufferOverrun);
-		}
 
-		if(_template.nameSpace > stringTableLength())
-		{
+		if(badStr(_template.nameSpace))
 			throw Exception("namespace in template", zE_BufferOverrun);
-		}
 
-		if(_template._module > stringTableLength())
-		{
-			throw Exception("_module in template", zE_BufferOverrun);
-		}
+		if(badStr(_template._module))
+			throw Exception("module in template", zE_BufferOverrun);
 
-		if(_template.declaration > stringTableLength())
-		{
+		if(badStr(_template.declaration))
 			throw Exception("declaration in template", zE_BufferOverrun);
+	}
+
+//-----------------------
+//  CHECK ENTRIES (done last: the per-property read-offset containment relies on
+//  the already-validated typeInfo and properties tables)
+//-----------------------
+	const uint64_t regionEnd = (uint64_t)m_header->savedObjectOffset + m_header->savedObjectLength;
+
+	for(uint32_t i = 0; i < addressTableLength(); ++i)
+	{
+		auto & entry = GetEntries()[i];
+
+		// entry payload [offset, offset+byteLength) within the savedObject region
+		if(entry.offset < m_header->savedObjectOffset)
+			throw Exception("entry save location", zE_BufferOverrun);
+		if((uint64_t)entry.offset + entry.byteLength > regionEnd)
+			throw Exception("entry save size", zE_BufferOverrun);
+
+		// owner is an entry index (0 = "no owner", which is also entry 0 == nullptr)
+		if(entry.owner >= addressTableLength())
+			throw Exception("owner in entry", zE_BufferOverrun);
+
+		// typeId indexes m_typeInfo directly at restore time (reader.cpp:737,874)
+		if(entry.typeId >= typeInfoLength())
+			throw Exception("typeId in entry", zE_BufferOverrun);
+
+		// Every property of this entry's type is read out of the entry payload.
+		// The restore loop reads an unconditional 4-byte handle slot at readOffset
+		// (reader.cpp:748), plus a byteLength-sized copy. Bound both.
+		auto & typeInfo = GetTypeInfo()[entry.typeId];
+		const uint32_t pb = typeInfo.propertiesBegin;
+		const uint32_t pl = typeInfo.propertiesLength;
+		for(uint32_t k = 0; k < pl; ++k)
+		{
+			auto & p = pBegin[pb + k];        // pb+pl <= propertiesLength() (checked above)
+
+			// 4-byte handle read stays inside the file buffer
+			if((uint64_t)entry.offset + p.offset + sizeof(uint32_t) > fileLen)
+				throw Exception("property read offset", zE_BufferOverrun);
+
+			// full property copy stays inside this entry's payload
+			if((uint64_t)p.offset + (uint32_t)p.byteLength > entry.byteLength)
+				throw Exception("property extent in entry", zE_BufferOverrun);
 		}
 	}
 }
@@ -375,7 +413,7 @@ inline void zCZodiacReader::SolveTypeInfo(T * op, int i)
 
 bool zCZodiacReader::LoadByteCode(asIScriptEngine * engine)
 {
-	bool loadedByteCode;
+	bool loadedByteCode = false;
 
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{

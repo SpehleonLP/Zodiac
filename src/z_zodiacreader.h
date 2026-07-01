@@ -63,6 +63,11 @@ public:
 
 private:
 friend class zCZodiac;
+	// true iff [offset, offset + count*elemSize) lies fully within [0, fileLen),
+	// with no arithmetic overflow. All inputs are widened to 64-bit; because every
+	// caller's offset/count come from 32-bit header fields and elemSize is a small
+	// sizeof, count*elemSize and offset+bytes can never overflow uint64_t.
+	static bool InFile(uint64_t offset, uint64_t count, uint64_t elemSize, uint64_t fileLen);
 	void ProcessModules(asIScriptEngine *, bool loadedByteCode);
 	void ReadSaveData(zREADER_FUNC_t, void *);
 	void DocumentGlobalVariables(asIScriptEngine *);
