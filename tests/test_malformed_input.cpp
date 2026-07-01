@@ -197,3 +197,27 @@ TEST(MalformedInput, EntryOwnerOutOfRange)
 	entries[0].owner = h->addressTableLength; // one past the last valid entry index
 	ExpectRejected(std::move(image), zE_BufferOverrun);
 }
+
+// Rule B.6 — a global's address (top bit clear) indexes past the object-address table.
+TEST(MalformedInput, GlobalAddressOutOfRange)
+{
+	std::vector<char> image = BuildValidImage();
+	zCHeader * h = HeaderOf(image);
+	ASSERT_GT(h->globalsLength, 0u);
+	zCGlobalInfo * globals = reinterpret_cast<zCGlobalInfo *>(image.data() + h->globalsOffset);
+	globals[0].address = h->addressTableLength + 1000; // object-address-table bound
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}
+
+// Rule B.6b — a funcdef-handle global (sentinel top bit set) whose function index
+// is past the function table; must be bounded against the FUNCTION table, not the
+// object-address table.
+TEST(MalformedInput, GlobalFunctionAddressOutOfRange)
+{
+	std::vector<char> image = BuildValidImage();
+	zCHeader * h = HeaderOf(image);
+	ASSERT_GT(h->globalsLength, 0u);
+	zCGlobalInfo * globals = reinterpret_cast<zCGlobalInfo *>(image.data() + h->globalsOffset);
+	globals[0].address = zGLOBAL_FUNCTION_ADDRESS | (h->functionTableLength + 1000);
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}

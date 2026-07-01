@@ -610,6 +610,20 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 
 	auto origin = m_file->tell();
 
+	// A funcdef-handle global's address is a FUNCTION-table index (SaveScriptObject
+	// routes funcdefs to SaveFunction), so flag it for the reader/Verify with the
+	// sentinel top bit. Non-funcdef globals index the object-address table as before.
+	auto markAddress = [this](uint32_t address, int typeId) -> uint32_t
+	{
+		if(address != 0 && (typeId & asTYPEID_APPOBJECT))
+		{
+			auto ti = GetEngine()->GetTypeInfoById(typeId);
+			if(ti && ti->GetFuncdefSignature())
+				return address | zGLOBAL_FUNCTION_ADDRESS;
+		}
+		return address;
+	};
+
 	for(uint32_t i = 0; i <  engine->GetModuleCount(); ++i)
 	{
 		modules[i].beginGlobalInfo = m_file->tell();
@@ -623,7 +637,7 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 			buffer.name = SaveString(name);
 			buffer.nameSpace = SaveString(nameSpace);
 			buffer.typeId   = typeId;
-			buffer.address = SaveScriptObject(mod->GetAddressOfGlobalVar(j), typeId, nullptr);
+			buffer.address = markAddress(SaveScriptObject(mod->GetAddressOfGlobalVar(j), typeId, nullptr), typeId);
 
 			m_file->Write(&buffer);
 		}
@@ -642,7 +656,7 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 		buffer.name = SaveString(name);
 		buffer.nameSpace = SaveString(nameSpace);
 		buffer.typeId   = typeId;
-		buffer.address = SaveScriptObject(address, typeId, nullptr);
+		buffer.address = markAddress(SaveScriptObject(address, typeId, nullptr), typeId);
 
 		m_file->Write(&buffer);
 	}

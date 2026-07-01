@@ -221,7 +221,13 @@ void zCZodiacReader::Verify() const
 		if(badStr(global.nameSpace))
 			throw Exception("namespace in global", zE_BufferOverrun);
 
-		if(global.address >= addressTableLength())
+		if(global.address & zGLOBAL_FUNCTION_ADDRESS)
+		{
+			// funcdef-handle global: address indexes the FUNCTION table
+			if((global.address & ~zGLOBAL_FUNCTION_ADDRESS) >= functionTableLength())
+				throw Exception("function id in global", zE_BufferOverrun);
+		}
+		else if(global.address >= addressTableLength())
 			throw Exception("entry id in global", zE_BufferOverrun);
 	}
 
@@ -357,7 +363,7 @@ void zCZodiacReader::DocumentGlobalVariables(asIScriptEngine * engine)
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
 			if(global)
-				PopulateTable( mod->GetAddressOfGlobalVar(j), global->address, typeId);
+				PopulateTable( mod->GetAddressOfGlobalVar(j), global->address & ~zGLOBAL_FUNCTION_ADDRESS, typeId);
 		}
 	}
 }
@@ -382,7 +388,7 @@ void zCZodiacReader::RestoreGlobalVariables(asIScriptEngine * engine)
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
 			if(global)
-				LoadScriptObject(mod->GetAddressOfGlobalVar(j), global->address, typeId);
+				LoadScriptObject(mod->GetAddressOfGlobalVar(j), global->address & ~zGLOBAL_FUNCTION_ADDRESS, typeId);
 		}
 	}
 }

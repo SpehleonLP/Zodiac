@@ -35,6 +35,14 @@ struct zCModule
 	uint globalsLength;
 };
 
+// A funcdef-handle global's `address` indexes the FUNCTION table (SaveScriptObject
+// routes funcdefs to SaveFunction), not the object-address table. It is marked
+// with this sentinel top bit so Verify() can bound it against the right table and
+// the restore path can mask it back to a plain function index. Real function/
+// object indices are bounded by RAM and never approach 2^31, so the top bit is a
+// safe discriminator (asserted implicitly by the Verify range checks).
+static const uint zGLOBAL_FUNCTION_ADDRESS = 0x80000000u;
+
 struct zCGlobalInfo
 {
 	uint name;
