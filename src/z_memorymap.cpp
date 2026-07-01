@@ -35,8 +35,25 @@ zCMemoryMap::zCMemoryMap(zIFileDescriptor * descriptor)
 		}
 	}
 
+	// Malloc-fallback path (in-memory descriptor, or mmap unavailable/failed).
+	// Sanity-cap the length so a corrupt/hostile tell() can't request an absurd
+	// allocation, and reject a failed malloc or a short read rather than handing
+	// Verify() a partially-filled buffer to walk. The cap also keeps m_length
+	// inside the int taken by Read().
+	constexpr unsigned long long kMaxFileLength = 512ull * 1024 * 1024;
+	if(m_length > kMaxFileLength)
+		throw zE_BufferOverrun;
+
 	m_contents = std::malloc(m_length);
-	descriptor->Read(m_contents, m_length);
+	if(m_contents == nullptr && m_length != 0)
+		throw zE_BufferOverrun;
+
+	if(descriptor->Read(m_contents, (int)m_length) != (int)m_length)
+	{
+		std::free(m_contents);
+		m_contents = nullptr;
+		throw zE_EndOfFile;
+	}
 }
 
 zCMemoryMap::~zCMemoryMap()

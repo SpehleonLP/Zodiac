@@ -216,7 +216,7 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 
 				if(!entry->onSave)
 				{
-					m_file->Write(ref, entry->byteLength);
+					m_file->Write(address, entry->byteLength);
 				}
 				else
 				{
@@ -303,12 +303,6 @@ void zCZodiacWriter::ProcessQueue()
 
 	for(uint32_t i = 0; i < m_stack.size(); ++i, ++m_progress)
 	{
-		if(i == 3)
-		{
-			int break_point = 0;
-			++break_point;
-		}
-
 		buffer.offset = m_file->tell();
 		buffer.typeId = SaveTypeId(m_stack[i].asTypeId);
 		buffer.owner = 0;

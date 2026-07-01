@@ -138,30 +138,6 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		(m_postRestoreCallback)(m_userData);
 	}
 
-#if 0
-	try
-	{
-		if(m_preRestoreCallback)
-		{
-			(m_preRestoreCallback)(m_userData);
-		}
-
-		reader->ReadSaveData(m_saveDataReadCallback, m_userData);
-		reader->RestoreGlobalVariables(m_engine);
-
-		if(m_postRestoreCallback)
-		{
-			(m_postRestoreCallback)(m_userData);
-		}
-	}
-	catch(Exception & e)
-	{
-		error_string = std::move(e.text);
-		error_code   = e.code;
-		throw error_code;
-	}
-#endif
-
 	return error_code;
 }
 

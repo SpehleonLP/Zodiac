@@ -7,8 +7,6 @@
 #include <stdexcept>
 #include <cstring>
 #include <cassert>
-#include <cstring>
-#include <stdexcept>
 
 #include "add_on/scriptdictionary/scriptdictionary.h"
 
@@ -67,6 +65,19 @@ zCZodiacReader::~zCZodiacReader()
 			{
 				engine->ReleaseScriptObject(m_loadedObjects[i].ptr, typeInfo);
 			}
+		}
+	}
+
+	// Each populated m_loadedFunctions slot holds exactly one reference: LoadFunction
+	// stores a function it AddRef'd (or a delegate it created, which is born with a
+	// ref). Callers that received the function got their own AddRef, so releasing the
+	// cached slot once balances the creation ref (Part C #11 — was leaked).
+	if(m_loadedFunctions != nullptr)
+	{
+		for(uint32_t i = 0; i < functionTableLength(); ++i)
+		{
+			if(m_loadedFunctions[i] != nullptr)
+				reinterpret_cast<asIScriptFunction*>(m_loadedFunctions[i])->Release();
 		}
 	}
 }
@@ -655,7 +666,7 @@ void zCZodiacReader::GetProperties(int typeId, zCProperty const*& begin, zCPrope
 	else
 	{
 		auto & typeInfo = m_typeInfo[typeId];
-		begin = (zCProperty const*)(m_mmap.GetAddress() + m_header->propertiesOffset) + typeInfo.propertiesLength;
+		begin = (zCProperty const*)(m_mmap.GetAddress() + m_header->propertiesOffset) + typeInfo.propertiesBegin;
 		end   = begin + typeInfo.propertiesLength;
 	}
 }
@@ -943,13 +954,6 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 		void * read = ((uint8_t*)src + p->readOffset);
 
 		assert(p->writeType == typeId);
-
-		if(*(uint32_t*)read == 31)
-		{
-			int break_point = 0;
-			++break_point;
-		}
-
 
 //app objects don't have an owner so it shouldn't cause an infinite loop
 		RestoreScriptObject(offset, read, typeId);

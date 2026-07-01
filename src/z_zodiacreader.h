@@ -95,13 +95,11 @@ friend class zCZodiac;
 	zCMemoryMap	  m_mmap;
 
 	zCHeader	  const * m_header;
-//	uint32_t	  const * m_stringAddresses;
 	char		  const * m_stringTable;
 	zCModule	  const * m_modules;
 	zCEntry		  const * m_entries;
 	zCGlobalInfo  const * m_globals;
 	zCTypeInfo    const * m_typeInfo;
-//	zCFunction    const * m_functions;
 
 
 	struct Property
