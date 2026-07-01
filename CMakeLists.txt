@@ -59,16 +59,9 @@ target_link_libraries(as_addons PUBLIC angelscript)
 
 # --- Zodiac -----------------------------------------------------------------
 file(GLOB ZODIAC_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-# BLOCKER (reported to owner): z_zodiaccontext.cpp (suspended-context save/restore)
-# calls patched asIScriptContext methods — SetVarContents(), GetVarTypeId(), and a
-# 3-arg PushFunction(func, obj, typeId) — that DO NOT EXIST anywhere in the patched
-# AngelScript SDK at ANGELSCRIPT_SDK. The engine never compiled this TU with the
-# real API because it builds Zodiac with HAVE_ZODIAC *undefined* (the whole library
-# compiles to nothing in-tree). Reviving the context round-trip (spec Part E test 8)
-# therefore requires an AngelScript-side patch that is OUT OF SCOPE for the Part A
-# harness. Excluded here so Part A + the canary build green; re-add once the AS API
-# gap is closed in a later phase.
-list(FILTER ZODIAC_SOURCES EXCLUDE REGEX "z_zodiaccontext\\.cpp$")
+# z_zodiaccontext.cpp (suspended-context save/restore) is now adapted to trunk's
+# AngelScript context API (2-arg PushFunction + GetAddressOfVar in place of the
+# owner's original, never-upstreamed SetVarContents) and compiles in-tree again.
 add_library(zodiac STATIC ${ZODIAC_SOURCES})
 target_include_directories(zodiac PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

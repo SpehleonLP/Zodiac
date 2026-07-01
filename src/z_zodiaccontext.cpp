@@ -16,12 +16,13 @@ struct CtxCallState
 
 	void PushFunction(Zodiac::zIZodiacReader * reader, asIScriptContext * ctx)
 	{
-		int typeId = reader->LoadTypeId(objectType);
 		void * scriptObject{};
 		auto _currentFunction = reader->LoadFunction(currentFunction);
 
 		reader->LoadScriptObject(&scriptObject, objectId, reader->LoadTypeId(objectType));
-		ctx->PushFunction(_currentFunction, scriptObject, typeId);
+		// trunk PushFunction is 2-arg (func, object); the 'this' typeId is derived
+		// from the function's object type, so the old typeId argument is gone.
+		ctx->PushFunction(_currentFunction, scriptObject);
 
 		SetToContext(reader, ctx, 0, _currentFunction);
 
@@ -168,32 +169,44 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 			if(!ctx->IsVarInScope(j, i))
 				continue;
 
-			auto typeInfo = ctx->GetVarTypeId(j, i);
+			// GetVarTypeId is deprecated; the live typeId comes from GetVar's out-param.
+			int varTypeId = 0;
+			ctx->GetVar(j, i, nullptr, &varTypeId);
 //write to confirm on reading
 			var.stackLevel = i;
 			var.varId = j;
-			var.typeId = writer->SaveTypeId(typeInfo);
-			var.object = writer->SaveScriptObject(ctx->GetAddressOfVar(j, i), typeInfo);
+			var.typeId = writer->SaveTypeId(varTypeId);
+			var.object = writer->SaveScriptObject(ctx->GetAddressOfVar(j, i), varTypeId);
 
 			file->Write(&var);
 		}
 	}
 }
 
+// Restore one on-stack variable of a suspended frame. Trunk removed
+// SetVarContents(); the replacement is GetAddressOfVar(var, stack,
+// dontDereference, returnAddressOfUninitializedObjects=true) to obtain the
+// destination slot (or the raw, uninitialized value storage), then load
+// straight into it — which for value types constructs in place via the
+// registered onLoad, avoiding the old temp-buffer copy entirely.
+//
+// dontDereference: for handle/reference slots we want the address of the
+// pointer slot itself (we write the restored pointer there), so pass true; for
+// primitives and value objects we want the value storage, so pass false. For a
+// by-value local handle GetAddressOfVar returns the slot regardless, so the
+// flag only matters for reference-parameter slots.
 static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx, int var, int stack, int address, int asTypeId)
 {
 	if(asTypeId <= asTYPEID_DOUBLE)
 	{
-		asQWORD object;
-		reader->LoadScriptObject(&object, address, asTypeId, true);
-		ctx->SetVarContents(var, stack, &object, asTypeId);
+		void * dst = ctx->GetAddressOfVar(var, stack, false, true);
+		if(dst) reader->LoadScriptObject(dst, address, asTypeId, true);
 		return;
 	}
 	else if(asTypeId & asTYPEID_SCRIPTOBJECT)
 	{
-		void * object{};
-		reader->LoadScriptObject(&object, address, asTypeId | asTYPEID_OBJHANDLE, true);
-		ctx->SetVarContents(var, stack, object, asTypeId);
+		void * dst = ctx->GetAddressOfVar(var, stack, true, true);
+		if(dst) reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, true);
 		return;
 	}
 	else if(asTypeId & asTYPEID_APPOBJECT || asTypeId & asTYPEID_TEMPLATE)
@@ -202,28 +215,19 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 
 		if(typeInfo && typeInfo->GetFuncdefSignature())
 		{
-			void * object{};
-			reader->LoadScriptObject(&object, address, asTypeId, true);
-			ctx->SetVarContents(var, stack, object, asTypeId);
+			void * dst = ctx->GetAddressOfVar(var, stack, true, true);
+			if(dst) reader->LoadScriptObject(dst, address, asTypeId, true);
 			return;
 		}
 		else if(typeInfo->GetFlags() & asOBJ_VALUE)
 		{
-			int size = std::max<int>(typeInfo->GetSize(), 8);
-			std::unique_ptr<uint8_t[]> object(new uint8_t[size]);
-
-	//dunno its something
-			reader->LoadScriptObject(&object[0], address, asTypeId, true);
-			ctx->SetVarContents(var, stack, &object[0], asTypeId);
-
+			void * dst = ctx->GetAddressOfVar(var, stack, false, true);
+			if(dst) reader->LoadScriptObject(dst, address, asTypeId, true);
 			return;
 		}
 
-		void * ptr{};
-		reader->LoadScriptObject(&ptr, address, asTypeId | asTYPEID_OBJHANDLE, true);
-
-
-		ctx->SetVarContents(var, stack, ptr, asTypeId);
+		void * dst = ctx->GetAddressOfVar(var, stack, true, true);
+		if(dst) reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, true);
 		return;
 	}
 
