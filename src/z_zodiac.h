@@ -33,7 +33,7 @@ struct TypeEntry;
 	void  SetReadSaveDataCallback(zREADER_FUNC_t cb)	 override { m_saveDataReadCallback = cb;  }
 	void  SetWriteSaveDataCallback(zWRITER_FUNC_t cb)	override { m_saveDataWriteCallback = cb;  }
 
-	void  SetPostRestoreCallback(zFUNCTION_t cb)		 override { m_postSavingCallback = cb;  }
+	void  SetPostRestoreCallback(zFUNCTION_t cb)		 override { m_postRestoreCallback = cb;  }
 	void  SetPostSavingCallback(zFUNCTION_t cb)			 override { m_postSavingCallback = cb;  }
 
 	void SetUserData(void * d) override { m_userData = d; };
@@ -82,7 +82,7 @@ private:
 	};
 
 	std::string error_string;
-	Code		error_code;
+	Code		error_code{zE_Success};
 };
 
 struct zCZodiac::TypeEntry

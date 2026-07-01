@@ -307,7 +307,8 @@ void zCZodiacReader::DocumentGlobalVariables(asIScriptEngine * engine)
 			mod->GetGlobalVar(j, &name, &nameSpace, &typeId);
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
-			PopulateTable( mod->GetAddressOfGlobalVar(j), global->address, typeId);
+			if(global)
+				PopulateTable( mod->GetAddressOfGlobalVar(j), global->address, typeId);
 		}
 	}
 }

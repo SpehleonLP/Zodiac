@@ -12,11 +12,13 @@ class Exception : public std::exception
 public:
 	static const char * ToString(int code)
 	{
-		if((uint)code >= Code::zE_Total)
+		unsigned index = code < 0 ? (unsigned)(-code) : (unsigned)code;
+
+		if(index >= (unsigned)Code::zE_Total)
 			return "";
 
 		static const char * strings[] = {
-			"None"
+			"None",
 			"Casting Exception",
 			"Buffer Overrun",
 			"Bad Object Address",
@@ -43,11 +45,14 @@ public:
 			"Already Saving"
 		};
 
-		return strings[code];
+		static_assert(sizeof(strings) / sizeof(strings[0]) == (unsigned)Code::zE_Total,
+			"exception string table out of sync with Code enum");
+
+		return strings[index];
 	}
 
 
-	Exception(Code code) :	text(ToString(-code)), code(code) { }
+	Exception(Code code) :	text(ToString(code)), code(code) { }
 	Exception(std::string const& text, Code code) :	text(ToString(code) + (": " + text)), code(code) { }
 	const char * what() const noexcept { return text.c_str(); }
 

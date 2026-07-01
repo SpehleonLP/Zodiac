@@ -37,6 +37,7 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 			throw zE_AlreadyLoading;
 
 		ClearBoolOnDestruct clearer(m_inProgress);
+		error_code = zE_Success;
 
 		SortTypeList();
 
@@ -91,6 +92,7 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	}
 
 	ClearBoolOnDestruct clearer(m_inProgress);
+	error_code = zE_Success;
 	std::unique_ptr<zCZodiacReader> reader;
 	bool changedEngineState = false;
 
@@ -116,6 +118,11 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	{
 		error_string = Exception::ToString(c);
 		error_code   = c;
+
+		if(changedEngineState)
+			throw c;
+
+		return error_code;
 	}
 
 	if(m_preRestoreCallback)
@@ -155,7 +162,7 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	}
 #endif
 
-	return Code::zE_Success;
+	return error_code;
 }
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace, bool isValueType)
@@ -189,7 +196,7 @@ int   zCZodiac::GetAsTypeIdFromZTypeId(int zTypeId) const
 {
 	for(auto & c : m_typeList)
 	{
-		if(c.asTypeId == zTypeId)
+		if(c.zTypeId == zTypeId)
 			return c.asTypeId;
 	}
 
@@ -283,7 +290,6 @@ void zCZodiac::SortTypeList()
 	}
 
 	auto N = m_engine->GetObjectTypeCount();
-	bool needSort = false;
 
 	for(uint32_t i = 0; i < N; ++i)
 	{
@@ -322,11 +328,6 @@ void zCZodiac::SortTypeList()
 
 			m_typeList.push_back(entry);
 		}
-	}
-
-	if(needSort)
-	{
-		std::sort(m_typeList.begin(), m_typeList.end());
 	}
 
 }
