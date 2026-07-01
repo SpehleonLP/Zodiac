@@ -209,6 +209,11 @@ struct WriteSubFile;
 	virtual uint SubFileOffset() const = 0;
 	inline uint AbsoluteTell() const { return SubFileOffset() + tell(); }
 
+	// Underlying OS file descriptor, or -1 if this stream is not backed by a
+	// real file (e.g. an in-memory buffer). Used by zCMemoryMap to prefer a
+	// read-only mmap over a full malloc+copy of the file.
+	virtual int GetFileDescriptor() const { return -1; }
+
 protected:
 	virtual void PushSubFile(uint, uint) = 0;
 	virtual void PushSubFile(uint*) = 0;

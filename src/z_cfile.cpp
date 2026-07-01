@@ -3,6 +3,7 @@
 #include "z_zodiacexception.h"
 #include <stdexcept>
 #include <cassert>
+#include <cstdio>
 
 namespace Zodiac
 {
@@ -106,6 +107,8 @@ uint zCFile::tell() const
 }
 
 uint zCFile::SubFileOffset() const { return stack[stackPos].begin; }
+
+int zCFile::GetFileDescriptor() const { return file ? fileno(file) : -1; }
 
 void zCFile::PushSubFile(uint offset, uint byteLength)
 {

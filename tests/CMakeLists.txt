@@ -5,7 +5,9 @@ file(GLOB ZODIAC_TEST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/support/*.cpp")
 add_executable(zodiac_tests ${ZODIAC_TEST_SOURCES})
-target_include_directories(zodiac_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/support")
+target_include_directories(zodiac_tests PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/support"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src")
 target_link_libraries(zodiac_tests PRIVATE zodiac GTest::gtest GTest::gtest_main)
 
 if(NOT ZODIAC_NO_SANITIZERS)
