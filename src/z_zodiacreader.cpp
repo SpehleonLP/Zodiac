@@ -530,13 +530,27 @@ void  zCZodiacReader::SolveTemplates(asIScriptEngine * engine)
 	{
 		asITypeInfo * typeInfo{};
 
-		if(!ti->_module)
+		asIScriptModule * _module = nullptr;
+		if(ti->_module)
+		{
+			_module = engine->GetModule(LoadString(ti->_module), asGM_ONLY_IF_EXISTS);
+			if(!_module) throw Exception(zE_ModuleDoesNotExist);
+		}
+
+		if(!_module)
 			typeInfo = engine->GetTypeInfoByDecl(LoadString(ti->declaration));
 		else
-		{
-			asIScriptModule * _module = engine->GetModule(LoadString(ti->_module), asGM_ONLY_IF_EXISTS);
-			if(!_module) throw Exception(zE_ModuleDoesNotExist);
 			typeInfo = _module->GetTypeInfoByDecl(LoadString(ti->declaration));
+
+//Funcdefs share this overflow table but a bare funcdef name is not a valid type
+//declaration for GetTypeInfoByDecl, so fall back to by-name resolution (module
+//first, then engine — script funcdefs live on the engine even when declared in a
+//module).
+		if(!typeInfo)
+		{
+			const char * name = LoadString(ti->name);
+			if(_module) typeInfo = _module->GetTypeInfoByName(name);
+			if(!typeInfo) typeInfo = engine->GetTypeInfoByName(name);
 		}
 
 		if(!typeInfo)
@@ -796,6 +810,23 @@ void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 
 void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, bool isWeak)
 {
+//Funcdef handles (member or global) are stored as FUNCTION-table indices, not
+//object-address indices, so they must be resolved through the function table and
+//never run the object-address machinery below (whose guard/entry lookups would
+//misinterpret the index).
+	if(asTypeId & asTYPEID_APPOBJECT)
+	{
+		auto ti = GetEngine()->GetTypeInfoById(asTypeId);
+		if(ti && ti->GetFuncdefSignature())
+		{
+			if(address == 0)
+				*(void**)dst = nullptr;
+			else
+				RestoreFunction((void**)dst, address, ti);
+			return;
+		}
+	}
+
 //object address 0 is nullptr so negative values aren't considered
 	if((uint32_t)address >= addressTableLength())
 		throw Exception(zE_BadObjectAddress);
@@ -1093,8 +1124,15 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 	else
 	{
 		void * delegateObject{};
-		LoadScriptObject(&delegateObject, function.delegateAddress, LoadTypeId(function.delegateTypeId) | asTYPEID_OBJHANDLE);
+		auto delegateType = LoadTypeId(function.delegateTypeId);
+		LoadScriptObject(&delegateObject, function.delegateAddress, delegateType | asTYPEID_OBJHANDLE);
 		asIScriptFunction * delegate = GetEngine()->CreateDelegate(func, delegateObject);
+
+//The handle load above AddRef'd delegateObject for this local (untracked by the
+//loaded-objects needRelease accounting); CreateDelegate takes its own reference,
+//so release ours or the delegate object leaks for the reader's lifetime.
+		if(delegateObject)
+			GetEngine()->ReleaseScriptObject(delegateObject, GetEngine()->GetTypeInfoById(delegateType));
 
 		if(!delegate)
 			throw Exception(zE_BadFunctionInfo);
@@ -1102,7 +1140,14 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 		func = delegate;
 	}
 
+//At this point `func` carries exactly one reference (the AddRef above for a
+//plain function, or CreateDelegate's initial count). The function table RETAINS
+//that reference — ~zCZodiacReader releases every populated slot — so the caller
+//must get its OWN reference, exactly as the cached-slot path (above) does. Without
+//this the caller's slot and the dtor would each release one AddRef → under-ref /
+//use-after-free (acute for delegates, whose only ref would be the table's).
 	m_loadedFunctions[id] = func;
+	func->AddRef();
 	++m_progress;
 	return func;
 }

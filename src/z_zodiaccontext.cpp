@@ -90,7 +90,16 @@ struct CtxStackState
 		_objectType	  = reader->LoadTypeInfo(objectType, true);
 		reader->LoadScriptObject(&objectRegister, objectRegister, objectType);
 
-		return ctx->SetStateRegisters(i, _callingSystemFunction, _initialFunction, originalStackPointer, argumentsSize, valueRegister, _objectRegister, _objectType);
+		int r = ctx->SetStateRegisters(i, _callingSystemFunction, _initialFunction, originalStackPointer, argumentsSize, valueRegister, _objectRegister, _objectType);
+
+		// SetStateRegisters stores these function pointers raw (it does NOT AddRef);
+		// the context borrows them, kept alive by their owning module. LoadFunction
+		// handed us OWNED references, so release ours here — matching the
+		// CtxCallState::PushFunction load/use/release pattern — or they leak.
+		if(_initialFunction)       _initialFunction->Release();
+		if(_callingSystemFunction) _callingSystemFunction->Release();
+
+		return r;
 	}
 };
 

@@ -810,6 +810,37 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 		}
 	}
 
+//Script-declared funcdefs live in the engine's internal funcDefs list but are
+//exposed by NEITHER engine->GetFuncdefByIndex (that lists only app-registered
+//funcdefs) NOR any module enumeration, so they never entered m_typeList. Give
+//them the same overflow slot templates use, keyed by name+module so the reader
+//can re-resolve them once the module's bytecode is loaded.
+	if(auto typeInfo = GetEngine()->GetTypeInfoById(typeId))
+	{
+		if(typeInfo->GetFuncdefSignature())
+		{
+			for(uint32_t i = 0; i < m_ttypeList.size(); ++i)
+			{
+				if(m_ttypeList[i] == typeId)
+					return m_typeList.size() + i;
+			}
+
+			auto _module = typeInfo->GetModule();
+			const char * declaration = GetEngine()->GetTypeDeclaration(typeId, true);
+
+			zCTemplate info;
+			info.name        = SaveString(typeInfo->GetName());
+			info.nameSpace   = SaveString(typeInfo->GetNamespace());
+			info.declaration = SaveString(declaration ? declaration : typeInfo->GetName());
+			info._module     = _module ? SaveString(_module->GetName()) : 0;
+
+			m_ttypeList.push_back(typeId);
+			m_templates.push_back(info);
+
+			return m_typeList.size() + m_ttypeList.size()-1;
+		}
+	}
+
 	throw Exception(zE_BadTypeId);
 	return -1;
 }
