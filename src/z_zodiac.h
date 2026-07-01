@@ -3,6 +3,7 @@
 #ifdef HAVE_ZODIAC
 #include "zodiac.h"
 #include <atomic>
+#include <string>
 #include <vector>
 
 namespace Zodiac

@@ -39,6 +39,8 @@ zCFile::zCFile(FILE* file, bool ownsFile) :
 
 zCFile::~zCFile()
 {
+	free(stack);
+
 	if(ownsFile)
 		fclose(file);
 }

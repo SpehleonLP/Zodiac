@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstring>
 #include <cassert>
+#include <stdexcept>
 
 namespace Zodiac
 {
