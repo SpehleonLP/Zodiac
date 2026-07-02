@@ -25,6 +25,12 @@ could not be exercised at all — see finding **S1**.
 Crashers (R2, R5, R7) abort the process, so run them in isolation; the other four
 fail cleanly. Full run minus the three crashers: **49 passed / 4 failed of 53**.
 
+### R8 (found during fix execution, 2026-07-01)
+
+| # | Test | Symptom | Likely root cause / anchor |
+|---|------|---------|----------------------------|
+| R8 | `EdgeBehaviors.SaveWithoutBytecode` | a *single* successful bytecode-less round-trip leaks **556 B / 2 allocs** (ASan, leak-detect on) — trace roots at `asCBuilder::RegisterClass` during the load-side recompile | the restore path retains a reference to a recompiled script type/module that the engine can no longer free at `Release`. Distinct from R4 (that was the double-load path); this reproduces on one load. Not yet fixed — out of Parts C/D/G scope; candidate for Part E/F or a follow-up. Test still passes (assertions ok); leak only visible with leak detection on. |
+
 ## Structural / static findings (not expressible as a runtime red)
 
 | # | Location | Issue |
