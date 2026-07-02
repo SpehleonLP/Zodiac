@@ -5,6 +5,7 @@
 #include "z_zodiacstate.h"
 #include "z_zodiac.h"
 #include <vector>
+#include <unordered_map>
 
 namespace Zodiac
 {
@@ -47,7 +48,6 @@ public:
 	int SaveScriptObject(void const* t, uint32_t asTypeId, void const* ownr = nullptr) override;
 
 private:
-typedef std::pair<void const*, int> VoidIntPair;
 
 	int  SaveObject(void const* ptr, int zTypeId, zSAVE_FUNC_t) override;
 
@@ -62,7 +62,7 @@ typedef std::pair<void const*, int> VoidIntPair;
 		int operator<(const Node& n) const { return address < n.address; }
 	};
 
-	bool HaveAddress(const void * value, int * closest, int * address) const;
+	bool HaveAddress(const void * value, int * address) const;
 	int EnqueueNode(Node node);
 	void WriteObject(Node & n, uint32_t & offset, uint32_t & byteLength);
 	bool WriteDelegate(const void * ptr, int typeId);
@@ -82,7 +82,11 @@ typedef std::pair<void const*, int> VoidIntPair;
 	zCHeader			  m_header;
 
 	std::vector<zCEntry>		m_addressTable{0};
-	std::vector<VoidIntPair>	m_addressIndex{{0,0}};
+	// Object address -> index into m_stack, for O(1) unification of nodes by
+	// address. Seeded with {nullptr, 0} so a null address maps to the sentinel
+	// slot. Was a sorted std::vector with midpoint inserts (O(n^2) to build);
+	// a hash map makes SaveToFile linear in the object count.
+	std::unordered_map<const void*, int> m_addressMap{{nullptr, 0}};
 	std::vector<int>			m_typeList;
 	std::vector<zCFunction>		m_functionList;
 	std::vector<zCProperty>     m_propertiesList;

@@ -51,25 +51,17 @@ int zCZodiacWriter::EnqueueNode(Node node)
 	assert(node.asTypeId < 0 || (node.asTypeId & asTYPEID_OBJHANDLE) == false);
 
 	int address{};
-	int closest{};
 
-	if(!HaveAddress(node.address, &closest, &address))
+	if(!HaveAddress(node.address, &address))
 	{
 		if(node.asTypeId & asTYPEID_SCRIPTOBJECT)
 			node.zTypeId = zIZodiac::GetTypeId<asIScriptObject>();
 
-		m_addressIndex.insert(m_addressIndex.begin()+closest, {node.address, m_stack.size()});
 		address = m_stack.size();
+		m_addressMap.emplace(node.address, address);
 
 		assert(node.asTypeId != zTYPEID_OBJECT);
 		m_stack.push_back(node);
-
-#ifndef NDEBUG
-		for(uint32_t i = 1; i < m_addressIndex.size(); ++i)
-		{
-			assert(m_addressIndex[i-1].first < m_addressIndex[i].first);
-		}
-#endif
 
 		return m_stack.size()-1;
 	}
@@ -94,7 +86,6 @@ int zCZodiacWriter::EnqueueNode(Node node)
 			if(!(node.asTypeId & asTYPEID_SCRIPTOBJECT)
 			&  !(stack.asTypeId & asTYPEID_SCRIPTOBJECT))
 			{
-				HaveAddress(node.address, &closest, &address);
 				throw Exception(zE_InconsistentObjectType);
 			}
 		}
@@ -111,45 +102,15 @@ int zCZodiacWriter::EnqueueNode(Node node)
 	return address;
 }
 
-bool zCZodiacWriter::HaveAddress(void const* value, int * closest, int * address) const
+bool zCZodiacWriter::HaveAddress(void const* value, int * address) const
 {
-	int32_t min = 0;
-	int32_t max = m_addressIndex.size()-1;
+	auto it = m_addressMap.find(value);
 
-	while(max - min > 8)
-	{
-		int avg = (min+max)/2 + 1;
+	if(it == m_addressMap.end())
+		return false;
 
-		if(m_addressIndex[avg].first < value)
-		{
-			min = avg;
-		}
-		else if(m_addressIndex[avg].first > value)
-		{
-			max = avg;
-		}
-		else
-		{
-			if(closest) *closest = avg;
-			if(address) *address = m_addressIndex[avg].second;
-			return true;
-		}
-	}
-
-	for(int32_t i = min; i <= max; ++i)
-	{
-		if(m_addressIndex[i].first >= value)
-		{
-			if(closest) *closest = i;
-			if(address) *address = m_addressIndex[i].second;
-			return  (m_addressIndex[i].first == value);
-		}
-	}
-
-	if(closest) *closest = m_addressIndex.size();
-	if(address) *address = m_addressIndex.size();
-
-	return false;
+	if(address) *address = it->second;
+	return true;
 }
 
 void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
@@ -338,14 +299,13 @@ void zCZodiacWriter::ProcessQueue()
 	m_header.savedObjectLength = m_file->tell() - m_header.savedObjectOffset;
 
 	int address{};
-	int closest{};
 
 	for(uint32_t i = 0; i < m_stack.size(); ++i)
 	{
 		address = 0;
 
 		if(m_stack[i].owner != nullptr
-		&& !HaveAddress(m_stack[i].owner, &closest, &address))
+		&& !HaveAddress(m_stack[i].owner, &address))
 			throw Exception(zE_OwnerNotEncoded);
 
 		m_addressTable[i].owner  = address;
