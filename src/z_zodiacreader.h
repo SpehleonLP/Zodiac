@@ -7,6 +7,7 @@
 #include "zodiac.h"
 #include <memory>
 #include <atomic>
+#include <cstring>
 
 namespace Zodiac
 {
@@ -51,7 +52,38 @@ public:
 
 	void LoadScriptObject(void *, int address, int asTypeId, bool isWeak=false) override;
 
-	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringTableLength()? &m_stringTable[id] : nullptr;  }
+	const char		*	LoadString(int id, uint32_t * outLen = nullptr) const override
+	{
+		if((uint32_t)id >= stringTableLength())
+		{
+			if(outLen) *outLen = 0;
+			return nullptr;
+		}
+
+		if(outLen)
+		{
+			const uint32_t avail = stringTableLength() - (uint32_t)id;
+			uint32_t len;
+			if((uint32_t)id >= sizeof(uint32_t))
+			{
+				// Length prefix sits immediately before the data (see the
+				// writer's InsertString). Read it unaligned-safe via memcpy.
+				memcpy(&len, m_stringTable + id - sizeof(uint32_t), sizeof(uint32_t));
+				// Never trust the stored length past the table end (corrupt
+				// input): clamp so a length-driven read can't over-run.
+				if(len > avail) len = (uint32_t)strnlen(&m_stringTable[id], avail);
+			}
+			else
+			{
+				// No room for a prefix (the empty-string sentinel at id 0, or a
+				// corrupt sub-prefix offset): fall back to a bounded strlen.
+				len = (uint32_t)strnlen(&m_stringTable[id], avail);
+			}
+			*outLen = len;
+		}
+
+		return &m_stringTable[id];
+	}
 	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
 	int					LoadTypeId(int id) override;
 	asIScriptFunction * LoadFunction(int id) override;

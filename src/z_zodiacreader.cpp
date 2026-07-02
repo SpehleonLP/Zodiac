@@ -107,6 +107,11 @@ void zCZodiacReader::Verify() const
 	if(strncmp(check.magic, m_header->magic, sizeof(check.magic)) != 0)
 		throw Exception("Not a zodiac file.", zE_BadFileType);
 
+	// On-disk format version: no back-compat (no shipped saves), so any image
+	// whose version does not match the current writer's is rejected outright.
+	if(m_header->writerVersionId != zZODIAC_FORMAT_VERSION)
+		throw Exception("incompatible zodiac format version", zE_BadFileType);
+
 	if(m_header->pointerSize != check.pointerSize
 	|| m_header->boolSize    != check.boolSize
 	|| m_header->isBigEndian != check.isBigEndian)

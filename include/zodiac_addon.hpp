@@ -205,7 +205,9 @@ namespace Zodiac
 	{
 		assert(string != nullptr);
 
-		int string_id = writer->SaveString(string->c_str());
+		// Length-explicit: content may contain embedded NUL bytes, so store the
+		// exact byte count rather than relying on NUL termination.
+		int string_id = writer->SaveString(string->data(), (uint32_t)string->size());
 		writer->GetFile()->Write(&string_id);
 	}
 
@@ -213,7 +215,9 @@ namespace Zodiac
 	{
 		int string_id;
 		reader->GetFile()->Read(&string_id);
-		new(string) std::string(reader->LoadString(string_id));
+		uint32_t len = 0;
+		const char * data = reader->LoadString(string_id, &len);
+		new(string) std::string(data ? data : "", data ? len : 0u);
 	}
 #endif
 

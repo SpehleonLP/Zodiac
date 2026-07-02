@@ -121,6 +121,17 @@ TEST(MalformedInput, BadMagic)
 	ExpectRejected(std::move(image), zE_BadFileType);
 }
 
+// Rule B.2 — on-disk format version mismatch. There is no back-compat: any
+// image whose writerVersionId != the current format version is rejected.
+TEST(MalformedInput, WrongFormatVersion)
+{
+	std::vector<char> image = BuildValidImage();
+	// Sanity: a freshly-saved image carries the current version and loads.
+	ASSERT_EQ(HeaderOf(image)->writerVersionId, zZODIAC_FORMAT_VERSION);
+	HeaderOf(image)->writerVersionId = zZODIAC_FORMAT_VERSION + 1;
+	ExpectRejected(std::move(image), zE_BadFileType);
+}
+
 // Rule B.2 — header self-consistency (pointer size mismatch).
 TEST(MalformedInput, HeaderPointerSizeMismatch)
 {

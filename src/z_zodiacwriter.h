@@ -40,6 +40,7 @@ public:
 	bool SaveByteCode() const override { return m_parent->GetProperty(zZP_SAVE_BYTECODE); }
 
 	int SaveString(const char *) override;
+	int SaveString(const char * data, uint32_t len) override;
 	int SaveTypeId(int id) override;
 	int SaveFunction(asIScriptFunction const* id) override;
 	int SaveContext(asIScriptContext const* id) override;
@@ -74,7 +75,7 @@ typedef std::pair<void const*, int> VoidIntPair;
 	zCTypeInfo WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * _module, asITypeInfo * type, bool registered);
 	void WriteScriptObject(const void * ptr, int typeId);
 	uint32_t GetByteLengthOfType(asIScriptEngine * engine, asIScriptModule * _module, uint32_t typeId);
-	uint32_t InsertString(const char * string);
+	uint32_t InsertString(const char * data, uint32_t len);
 
 	zCZodiac		 *    m_parent;
 	zIFileDescriptor *    m_file;

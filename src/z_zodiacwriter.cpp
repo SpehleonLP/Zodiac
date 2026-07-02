@@ -754,9 +754,27 @@ void zCZodiacWriter::WriteHeader()
 	m_file->Write(&m_header);
 }
 
+// Convenience overload for names/identifiers (type/namespace/module/declaration
+// names) that are legitimately C-strings. Content strings (the std::string
+// add-on value) must go through the length-explicit overload below so embedded
+// NUL bytes survive.
 int zCZodiacWriter::SaveString(const char * string)
 {
 	if(string == nullptr) return 0;
+	return SaveString(string, (uint32_t)strlen(string));
+}
+
+int zCZodiacWriter::SaveString(const char * data, uint32_t len)
+{
+	if(data == nullptr) return 0;
+
+	// A string with no embedded NUL in [0,len) is an ordinary C-string: route it
+	// through the strcmp-ordered dedup index so names/identifiers keep unifying.
+	// A string WITH an embedded NUL cannot participate in strcmp-ordered dedup
+	// (strcmp would compare only its pre-NUL prefix and could false-match a
+	// different entry), so it is stored fresh, length-explicit.
+	if(strnlen(data, len) != len)
+		return InsertString(data, len);
 
 	int32_t min = 0;
 	int32_t max = stringAddress.size()-1;
@@ -765,7 +783,7 @@ int zCZodiacWriter::SaveString(const char * string)
 	{
 		int avg = (min+max)/2 + 1;
 
-		int cmp = strcmp(&stringContents[stringAddress[avg]], string);
+		int cmp = strcmp(&stringContents[stringAddress[avg]], data);
 
 		if(cmp < 0)
 			min = avg;
@@ -777,33 +795,40 @@ int zCZodiacWriter::SaveString(const char * string)
 
 	for(int32_t i = min; i <= max; ++i)
 	{
-		int cmp = strcmp(&stringContents[stringAddress[i]], string);
+		int cmp = strcmp(&stringContents[stringAddress[i]], data);
 
 		if(cmp == 0)
 			return stringAddress[i];
 		else if(cmp > 0)
 		{
-			uint32_t address = InsertString(string);
+			uint32_t address = InsertString(data, len);
 			stringAddress.insert(stringAddress.begin()+i, address);
 			return address;
 		}
 	}
 
-	stringAddress.push_back(InsertString(string));
+	stringAddress.push_back(InsertString(data, len));
 
 	return stringAddress.back();
 }
 
-uint32_t zCZodiacWriter::InsertString(const char * string)
+// Appends a length-prefixed, NUL-terminated string record to the table:
+//   [uint32 len][len bytes of data][NUL]
+// and returns the byte offset of the DATA (i.e. one uint32 past the prefix).
+// Every stored offset points at the data start, so the strcmp-based dedup index
+// and the NUL-terminated convenience readers keep working unchanged; the
+// length-aware readers recover the exact byte count from the prefix at offset-4.
+uint32_t zCZodiacWriter::InsertString(const char * data, uint32_t len)
 {
-	uint32_t address = stringContents.size();
+	uint32_t prefix = stringContents.size();
+	stringContents.resize((size_t)prefix + sizeof(uint32_t) + len + 1);
 
-	auto len = strlen(string);
-	stringContents.resize(stringContents.size()+len+1);
-	strncpy(&stringContents[address], string, len);
-	stringContents[address+len] = 0;
+	memcpy(&stringContents[prefix], &len, sizeof(uint32_t));
+	if(len)
+		memcpy(&stringContents[prefix + sizeof(uint32_t)], data, len);
+	stringContents[prefix + sizeof(uint32_t) + len] = 0;
 
-	return address;
+	return prefix + sizeof(uint32_t);
 }
 
 int zCZodiacWriter::SaveTypeId(int typeId)

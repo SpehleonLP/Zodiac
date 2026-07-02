@@ -264,7 +264,11 @@ public:
 	virtual void LoadScriptObject(void *, int address, int asTypeId, bool isWeak = false) = 0;
 	inline  void LoadScriptObject(void * object, int address, asITypeInfo * typeInfo, bool isWeak = false) { LoadScriptObject(object, address, typeInfo? typeInfo->GetTypeId() : 0, isWeak); }
 
-	virtual const char  * LoadString(int id) const = 0;
+	// Returns the string data at `id` (NUL-terminated for the convenience/name
+	// readers). If `outLen` is non-null it is filled with the exact stored byte
+	// length, which may be shorter than the pointer suggests only for corrupt
+	// input and may legitimately contain embedded NUL bytes for content strings.
+	virtual const char  * LoadString(int id, uint32_t * outLen = nullptr) const = 0;
 	virtual asITypeInfo * LoadTypeInfo(int id, bool RefCount) = 0;
 	virtual int           LoadTypeId(int id) = 0;
 //always refcounts
@@ -294,7 +298,11 @@ public:
 	virtual asIScriptEngine * GetEngine() const = 0;
 	virtual bool SaveByteCode() const = 0;
 
+	// Convenience overload: stores a NUL-terminated name/identifier (length =
+	// strlen). Content strings that may contain embedded NULs must use the
+	// length-explicit overload so the exact byte count round-trips.
 	virtual int SaveString(const char *) = 0;
+	virtual int SaveString(const char * data, uint32_t len) = 0;
 	inline  int SaveTypeInfo(asITypeInfo const* typeInfo) { return typeInfo? SaveTypeId(typeInfo->GetTypeId()) : 0; }
 	virtual int SaveTypeId(int asTypeId) = 0;
 	virtual int SaveFunction(asIScriptFunction const* id) = 0;

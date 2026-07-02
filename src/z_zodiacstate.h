@@ -6,6 +6,15 @@
 namespace Zodiac
 {
 
+// On-disk format version. Bump whenever the wire format changes in a way that
+// makes older images unreadable. Verify() rejects any image whose stored
+// writerVersionId != this value with zE_BadFileType. There is no on-disk
+// back-compat (no shipped saves), so a hard != reject is correct.
+//   v1 (2026-07-01): string table entries are length-prefixed (uint32 byte
+//                    count stored immediately before each string's data) so
+//                    strings with embedded NUL bytes round-trip.
+static constexpr uint zZODIAC_FORMAT_VERSION = 1;
+
 struct zCEntry
 {
 	uint typeId;
@@ -95,7 +104,7 @@ struct zCHeader
 	ubyte  isBigEndian{};
 	ubyte  pad11{};
 	uint asVersion{ANGELSCRIPT_VERSION};
-	uint writerVersionId{};
+	uint writerVersionId{zZODIAC_FORMAT_VERSION};
 
 	uint saveDataByteOffset{};
 	uint saveDataByteLength{};
