@@ -88,7 +88,22 @@ struct CtxStackState
 		_callingSystemFunction = reader->LoadFunction(callingSystemFunction);
 		_initialFunction = reader->LoadFunction(initialFunction);
 		_objectType	  = reader->LoadTypeInfo(objectType, true);
-		reader->LoadScriptObject(&objectRegister, objectRegister, objectType);
+
+		// Restore the object register into the LOCAL void* slot that is actually
+		// handed to SetStateRegisters. The previous code loaded into the 4-byte
+		// `objectRegister` MEMBER -- an 8-byte pointer write that overflowed into
+		// the adjacent `objectType` field -- and then passed the still-null local
+		// `_objectRegister`, silently dropping the register. `objectRegister` is an
+		// object-address index (see GetFromContext's SaveScriptObject); index 0 is
+		// a null register. NOTE: SetStateRegisters stores this pointer raw and the
+		// VM assumes ownership of one reference, so load it as an owning handle
+		// (isWeak=false, the reader's default) -- symmetric with the call/global
+		// paths. This branch is currently unexercised (no test suspends with a live
+		// object register); the fix restores correct mechanics without changing the
+		// tested null-register behaviour.
+		if(objectRegister != 0 && _objectType)
+			reader->LoadScriptObject(&_objectRegister, objectRegister,
+				_objectType->GetTypeId() | asTYPEID_OBJHANDLE);
 
 		int r = ctx->SetStateRegisters(i, _callingSystemFunction, _initialFunction, originalStackPointer, argumentsSize, valueRegister, _objectRegister, _objectType);
 
@@ -214,8 +229,20 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 	}
 	else if(asTypeId & asTYPEID_SCRIPTOBJECT)
 	{
+		// A local handle slot is uninitialized storage (GetAddressOfVar with
+		// returnUninitialized=true): the mid-function resume skips the entry
+		// bytecode that would have cleared it, so it holds stack garbage. Null it
+		// before loading so the reader's alias/null bookkeeping (which asserts an
+		// empty slot before populating) sees a clean pointer. isWeak=false: a
+		// script-local handle OWNS its reference exactly like a global/member --
+		// the function epilogue releases it -- so the reader must leave one owned
+		// ref in the slot (needRelease balanced), not treat it as a weak borrow.
 		void * dst = ctx->GetAddressOfVar(var, stack, true, true);
-		if(dst) reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, true);
+		if(dst)
+		{
+			*(void**)dst = nullptr;
+			reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, false);
+		}
 		return;
 	}
 	else if(asTypeId & asTYPEID_APPOBJECT || asTypeId & asTYPEID_TEMPLATE)
@@ -225,7 +252,7 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 		if(typeInfo && typeInfo->GetFuncdefSignature())
 		{
 			void * dst = ctx->GetAddressOfVar(var, stack, true, true);
-			if(dst) reader->LoadScriptObject(dst, address, asTypeId, true);
+			if(dst) { *(void**)dst = nullptr; reader->LoadScriptObject(dst, address, asTypeId, false); }
 			return;
 		}
 		else if(typeInfo->GetFlags() & asOBJ_VALUE)
@@ -235,8 +262,9 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 			return;
 		}
 
+		// app-object handle: same owning-reference semantics as a script handle.
 		void * dst = ctx->GetAddressOfVar(var, stack, true, true);
-		if(dst) reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, true);
+		if(dst) { *(void**)dst = nullptr; reader->LoadScriptObject(dst, address, asTypeId | asTYPEID_OBJHANDLE, false); }
 		return;
 	}
 
