@@ -16,10 +16,23 @@ struct CtxCallState
 
 	void PushFunction(Zodiac::zIZodiacReader * reader, asIScriptContext * ctx)
 	{
-		void * scriptObject{};
+		void * scriptObject = nullptr;
 		auto _currentFunction = reader->LoadFunction(currentFunction);
 
-		reader->LoadScriptObject(&scriptObject, objectId, reader->LoadTypeId(objectType));
+		// The frame's `this` slot is a handle-to-object: `scriptObject` is a void*
+		// that receives the object pointer, so it must be loaded with the OBJHANDLE
+		// flag (and nulled first) exactly like the global/member/local handle paths.
+		// The prior call omitted the flag and left `scriptObject` uninitialised, so an
+		// object already materialised via an aliasing global reached the alias branch
+		// of LoadScriptObjectImpl through the wrong (by-value) type comparison — adding
+		// a reference the frame does not own. On resume the VM's `this` release then
+		// drove the shared object's refcount below its live count (use-after-free,
+		// tripping asCAtomic). isWeak=false: PushFunction stores the pointer raw and
+		// the frame OWNS one reference (released when the frame unwinds), so the reader
+		// must deposit exactly one owned reference here.
+		if(objectId)
+			reader->LoadScriptObject(&scriptObject, objectId,
+				reader->LoadTypeId(objectType) | asTYPEID_OBJHANDLE, false);
 		// trunk PushFunction is 2-arg (func, object); the 'this' typeId is derived
 		// from the function's object type, so the old typeId argument is gone.
 		ctx->PushFunction(_currentFunction, scriptObject);
@@ -86,8 +99,26 @@ struct CtxStackState
 		asITypeInfo * _objectType{};
 
 		_callingSystemFunction = reader->LoadFunction(callingSystemFunction);
-		_initialFunction = reader->LoadFunction(initialFunction);
 		_objectType	  = reader->LoadTypeInfo(objectType, true);
+
+		// At stackLevel 0 the context ALREADY owns m_initialFunction: PushFunction ->
+		// Prepare set it (AddRef'd) and Unprepare will Release it. SetStateRegisters(0)
+		// stores initialFunction RAW (no AddRef, no release of the prior value), so
+		// handing it a freshly-loaded, possibly-different function corrupts the count:
+		// for a virtual method call Prepare stored the resolved REAL function while the
+		// serialized initialFunction is the VIRTUAL stub — the clobber leaks Prepare's
+		// reference and Unprepare then over-releases the raw-stored stub (use-after-free
+		// tripping asCAtomic at engine teardown). Reuse the already-prepared function so
+		// the register write is reference-neutral; only nested (level>0) states, whose
+		// initialFunction lives borrowed in the call-stack array, load+release their own.
+		//
+		// m_initialFunction is the OUTERMOST frame's function (the first one Prepared),
+		// not the innermost current function — for a deep call stack GetFunction(0) is
+		// the wrong (innermost) frame, so read the top of the stack.
+		if(i == 0)
+			_initialFunction = ctx->GetFunction(ctx->GetCallstackSize() - 1);
+		else
+			_initialFunction = reader->LoadFunction(initialFunction);
 
 		// Restore the object register into the LOCAL void* slot that is actually
 		// handed to SetStateRegisters. The previous code loaded into the 4-byte
@@ -110,9 +141,11 @@ struct CtxStackState
 		// SetStateRegisters stores these function pointers raw (it does NOT AddRef);
 		// the context borrows them, kept alive by their owning module. LoadFunction
 		// handed us OWNED references, so release ours here — matching the
-		// CtxCallState::PushFunction load/use/release pattern — or they leak.
-		if(_initialFunction)       _initialFunction->Release();
-		if(_callingSystemFunction) _callingSystemFunction->Release();
+		// CtxCallState::PushFunction load/use/release pattern — or they leak. The
+		// level-0 initialFunction is the exception: it is not a fresh LoadFunction ref
+		// (it is the context's own prepared function, see above), so it is not released.
+		if(i != 0 && _initialFunction) _initialFunction->Release();
+		if(_callingSystemFunction)     _callingSystemFunction->Release();
 
 		return r;
 	}
@@ -162,6 +195,19 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 	if(callStackSize <= 0)
 		return;
 
+	// A PREPARED-but-never-executed context has no live call frame to serialize —
+	// GetCallstackSize() reports 1 only because the initial function is set. The
+	// deserialization API (StartDeserialization/PushFunction/FinishDeserialization)
+	// can only ever finish in asEXECUTION_SUSPENDED, so resurrecting a frame here
+	// would silently downgrade the restored state. Persist just the initial function
+	// and re-Prepare on load, which faithfully reproduces asEXECUTION_PREPARED.
+	if(status == asEXECUTION_PREPARED)
+	{
+		uint32_t fn = writer->SaveFunction(ctx->GetFunction(0));
+		file->Write(&fn);
+		return;
+	}
+
 //write stack frames
 	StackFrame sf;
 	for(int i = ctx->GetCallstackSize()-1; i >= 0; --i)
@@ -193,12 +239,30 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 			if(!ctx->IsVarInScope(j, i))
 				continue;
 
+			var.stackLevel = i;
+			var.varId = j;
+
+			// A variable can be reported in-scope yet have no live storage: the
+			// compiler emits anonymous temporaries (e.g. the list-buffer local of an
+			// initializer-list expression — an asOBJ_LIST_PATTERN app type with no
+			// registered save handler) whose slot is already dead at the suspend
+			// point. GetAddressOfVar returns null for these; there is no value to
+			// preserve and SaveTypeId would reject the list-pattern typeId. Emit a
+			// placeholder record (typeId 0 = "nothing to restore") so the per-variable
+			// record stream stays in lockstep with the load-side in-scope walk, which
+			// cannot itself re-derive the null-storage predicate during deserialization.
+			if(ctx->GetAddressOfVar(j, i) == nullptr)
+			{
+				var.typeId = 0;
+				var.object = 0;
+				file->Write(&var);
+				continue;
+			}
+
 			// GetVarTypeId is deprecated; the live typeId comes from GetVar's out-param.
 			int varTypeId = 0;
 			ctx->GetVar(j, i, nullptr, &varTypeId);
 //write to confirm on reading
-			var.stackLevel = i;
-			var.varId = j;
 			var.typeId = writer->SaveTypeId(varTypeId);
 			var.object = writer->SaveScriptObject(ctx->GetAddressOfVar(j, i), varTypeId);
 
@@ -291,6 +355,23 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 	auto ctx = *_ctx = reader->GetEngine()->RequestContext();
 	if(!callStackSize) return;
+
+	// Symmetric with ZodiacSave: a PREPARED context was persisted as just its initial
+	// function. Re-Prepare rather than running the deserialization frame path, which
+	// would leave the context in asEXECUTION_SUSPENDED instead of asEXECUTION_PREPARED.
+	if(state == asEXECUTION_PREPARED)
+	{
+		uint32_t fn{};
+		file->Read(&fn);
+		auto func = reader->LoadFunction(fn);
+		if(func)
+		{
+			ctx->Prepare(func);
+			func->Release();
+		}
+		return;
+	}
+
 	ctx->StartDeserialization();
 
 //write stack frames
@@ -318,13 +399,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 	sf.state.SetToContext(reader, ctx, 0);
 
 //write variable contents
-
-	if(state == asEXECUTION_PREPARED)
-	{
-		ctx->FinishDeserialization();
-		return;
-	}
-
+//	(PREPARED is handled up-front via re-Prepare; only SUSPENDED reaches here)
 
 	StackVar var;
 	for(uint32_t i = 0; i < ctx->GetCallstackSize(); ++i)
@@ -340,6 +415,11 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 			assert(var.stackLevel == i);
 			assert(var.varId == j);
+
+			// Placeholder record for a dead anonymous temporary (see ZodiacSave):
+			// nothing was serialized, so there is nothing to restore.
+			if(var.typeId == 0)
+				continue;
 
 			auto typeInfo = reader->LoadTypeId(var.typeId);
 

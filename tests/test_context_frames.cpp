@@ -61,7 +61,12 @@ void ReadCtx(zIZodiacReader * r, void * p)
 int RunToFinish(asIScriptContext * ctx)
 {
 	int guard = 0, state = ctx->GetState();
-	while(state == asEXECUTION_SUSPENDED && guard++ < 1000) state = ctx->Execute();
+	// Drive to completion from either a mid-run SUSPENDED state or a fresh
+	// PREPARED (Prepare()'d-but-never-Executed) context — Execute() runs a
+	// prepared context from the top, so both are "runnable" here.
+	while((state == asEXECUTION_SUSPENDED || state == asEXECUTION_PREPARED)
+			&& guard++ < 1000)
+		state = ctx->Execute();
 	EXPECT_EQ(state, asEXECUTION_FINISHED) << "resumed context did not finish (state " << state << ")";
 	return (int)ctx->GetReturnDWord();
 }
