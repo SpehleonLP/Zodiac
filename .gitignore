@@ -1,0 +1,54 @@
+x64/
+obj/
+build/
+.vs/
+.qtc_clangd/
+.claude/
+.worktrees/
+.superpowers/
+
+# clangd compile DB: generated per-tree (out-of-source build dir), symlinked at
+# the tree root by scripts/wt-create.sh. Never committed — it holds absolute
+# paths into one specific tree.
+/compile_commands.json
+
+*.zip
+
+# Config
+*.pro.user
+*.pro.user.*
+
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+*.ipch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
