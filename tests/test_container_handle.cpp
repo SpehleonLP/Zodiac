@@ -105,3 +105,31 @@ TEST(ContainerHandle, ResolvesToScriptObject)
 	auto node = static_cast<asIScriptObject*>(ref);
 	EXPECT_EQ(*static_cast<int*>(node->GetAddressOfProperty(0)), 99);
 }
+
+// A `ref` that holds nothing (GetType()==null) round-trips as empty. This is
+// green regression coverage for a genuine footgun: `ref` is asOBJ_ASHANDLE, so the
+// global slot stores the CScriptHandle INLINE -- read it via GlobalValue (no extra
+// deref). The save side writes typeId 0 for a null handle and the load side must
+// restore an empty handle, NOT crash or fabricate a dangling reference.
+TEST(ContainerHandle, EmptyRefRoundTrips)
+{
+	std::vector<char> image;
+	{
+		TestEngine engine;
+		BuildAndSetup(engine,
+			"ref@ r;\n"
+			"void setup(){\n"
+			"  ref x;\n"        // never assigned an object
+			"  @r = x;\n"
+			"}\n");
+		image = SaveEngine(engine.get());
+	}
+	ASSERT_FALSE(image.empty());
+
+	TestEngine engine;
+	LoadEngine(engine.get(), image);
+	auto handle = GlobalValue<CScriptHandle>(engine.get(), "r");  // ASHANDLE: inline
+	ASSERT_NE(handle, nullptr);
+	EXPECT_EQ(handle->GetType(), nullptr) << "empty ref must round-trip empty";
+	EXPECT_EQ(handle->GetRef(), nullptr);
+}

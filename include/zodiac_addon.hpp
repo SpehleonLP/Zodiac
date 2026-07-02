@@ -508,14 +508,23 @@ namespace Zodiac
 
 		auto file = writer->GetFile();
 
-		int typeId      = writer->SaveTypeInfo(handle->GetType());
+	// A `ref` value local lives INLINE on AngelScript's dword-aligned script stack, so
+	// `handle` may be only 4-byte aligned while CScriptHandle needs 8. Member calls on a
+	// misaligned object are UB (UBSan flags them). CScriptHandle is trivially relocatable
+	// and we only READ it (no mutation, no refcount change), so copy the bytes into an
+	// aligned local and operate on that.
+		alignas(AS_NAMESPACE_QUALIFIER CScriptHandle) unsigned char storage[sizeof(AS_NAMESPACE_QUALIFIER CScriptHandle)];
+		memcpy(storage, handle, sizeof(storage));
+		auto aligned = reinterpret_cast<AS_NAMESPACE_QUALIFIER CScriptHandle*>(storage);
+
+		int typeId      = writer->SaveTypeInfo(aligned->GetType());
 		int objectId{};
 
 	// CScriptHandle::GetRef() is non-const upstream; the save signature must stay
-	// `CScriptHandle const*` to match the registered zSAVE_FUNC_t, so const_cast
-	// at this single call site (we do not mutate the handle).
-		if(handle->GetType())
-			objectId = writer->SaveScriptObject(const_cast<AS_NAMESPACE_QUALIFIER CScriptHandle*>(handle)->GetRef(), handle->GetType()->GetTypeId(), nullptr);
+	// `CScriptHandle const*` to match the registered zSAVE_FUNC_t. We read from the
+	// aligned copy, so no mutation reaches the real (misaligned) object.
+		if(aligned->GetType())
+			objectId = writer->SaveScriptObject(aligned->GetRef(), aligned->GetType()->GetTypeId(), nullptr);
 
 		file->Write(&typeId);
 		file->Write(&objectId);
@@ -565,11 +574,19 @@ namespace Zodiac
 		int typeId{};
 		int objectId{};
 
-		auto object = handle->Get();
+	// As with CScriptHandle: a `weakref<T>` value local is inline on the dword-aligned
+	// script stack and may be only 4-byte aligned. Read through an aligned copy (Get()
+	// and GetRefType() are const and only AddRef the referenced object, not the weakref)
+	// so the member calls are not misaligned UB.
+		alignas(AS_NAMESPACE_QUALIFIER CScriptWeakRef) unsigned char storage[sizeof(AS_NAMESPACE_QUALIFIER CScriptWeakRef)];
+		memcpy(storage, handle, sizeof(storage));
+		auto aligned = reinterpret_cast<AS_NAMESPACE_QUALIFIER CScriptWeakRef const*>(storage);
+
+		auto object = aligned->Get();
 
 		if(object)
 		{
-			auto typeInfo = handle->GetRefType();
+			auto typeInfo = aligned->GetRefType();
 
 	// GetObjectType() was removed upstream; GetRefType() is the type of the held
 	// reference and serves for both the weakref type and the referenced object.

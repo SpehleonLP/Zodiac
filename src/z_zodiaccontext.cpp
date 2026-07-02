@@ -1,7 +1,10 @@
 #include "z_zodiaccontext.h"
 #ifdef HAVE_ZODIAC
 #include <cassert>
+#include <cstring>
 #include <iostream>
+#include <unordered_map>
+#include <vector>
 
 struct CtxCallState
 {
@@ -322,7 +325,38 @@ static void zLoadVariable(Zodiac::zIZodiacReader* reader, asIScriptContext* ctx,
 		else if(typeInfo->GetFlags() & asOBJ_VALUE)
 		{
 			void * dst = ctx->GetAddressOfVar(var, stack, false, true);
-			if(dst) reader->LoadScriptObject(dst, address, asTypeId, true);
+			if(!dst)
+				return;
+
+			// A value local's inline stack slot is RAW, uninitialized memory (the resume
+			// skipped the prologue that would have constructed it). Most registered value
+			// types' onLoad handlers cope: they placement-construct or write fields into the
+			// raw slot without reading prior state, so loading straight into dst is correct
+			// (and required — a std::string, for instance, keeps a self-pointer in SSO mode
+			// and must NOT be relocated by a byte copy).
+			//
+			// The exception is the asOBJ_ASHANDLE value types (`ref`/`weakref`): their onLoad
+			// Set() RELEASES the previously-held reference first, so it needs a validly
+			// constructed object — a raw slot makes Set() release garbage (SEGV). They also
+			// need 8-byte alignment the 4-byte stack slot cannot give, tripping UBSan in the
+			// glue. ASHANDLE types hold only external pointers (no self-pointers), so they ARE
+			// trivially relocatable: construct + load in an aligned heap instance, then move
+			// the bytes into the slot and release the emptied husk (destructor is a no-op).
+			if(typeInfo->GetFlags() & asOBJ_ASHANDLE)
+			{
+				auto engine = reader->GetEngine();
+				if(void * aligned = engine->CreateScriptObject(typeInfo))
+				{
+					asUINT sz = typeInfo->GetSize();
+					reader->LoadScriptObject(aligned, address, asTypeId, true);
+					memcpy(dst, aligned, sz);
+					memset(aligned, 0, sz);
+					engine->ReleaseScriptObject(aligned, typeInfo);
+				}
+				return;
+			}
+
+			reader->LoadScriptObject(dst, address, asTypeId, true);
 			return;
 		}
 
@@ -398,8 +432,75 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 	assert(sf.isCallState == 2);
 	sf.state.SetToContext(reader, ctx, 0);
 
+//null out-of-scope object/handle slots (reproduce the function-prologue state)
+//
+// AngelScript does not zero-initialize context stack memory (asNEWARRAY, not calloc)
+// and a compiled function relies on two things to make its pointer/handle slots null
+// before first use: (a) asBC_ClrVPtr emitted at a variable's declaration, and (b) the
+// entry-time nulling in asCContext::PrepareScriptFunction for every onHeap object/handle
+// variable. Both happen relative to the ORIGINAL forward run. A deserialized frame is
+// rebuilt with fresh (uninitialized) stack memory and its stack registers are then
+// overwritten with the saved values, so any object/handle slot whose declaration lies
+// AFTER the suspend point — and every temporary the compiler assumed was pre-nulled —
+// still holds stack garbage. When execution resumes, the first assignment into such a
+// slot runs asBC_RefCpyV, which RELEASES the slot's prior contents (CScriptArray::Release,
+// script-object release, CScriptHandle release, ...) — releasing garbage and crashing.
+//
+// This clears EVERY onHeap object/handle slot (mirroring PrepareScriptFunction's entry
+// step); the live, in-scope variables are then restored on top of the cleared slots in
+// the loop below. Clearing the in-scope ones too is deliberate: an in-scope variable can
+// be a dead anonymous temporary whose storage was already gone at the suspend point (the
+// writer emitted a typeId-0 placeholder for it), and the restore loop skips those — so if
+// we did not null them here they would keep their stack garbage and be released on resume.
+// Inline value locals are left untouched — their construction is tracked separately by the
+// VM and they are not pointer-released; the in-scope live ones are rebuilt by the loop.
+	for(uint32_t i = 0; i < ctx->GetCallstackSize(); ++i)
+	{
+		auto N = ctx->GetVarCount(i);
+
+		for(uint16_t j = 0; j < N; ++j)
+		{
+			int slotTypeId = 0;
+			ctx->GetVar(j, i, nullptr, &slotTypeId);
+			if(slotTypeId <= asTYPEID_DOUBLE)
+				continue; // primitive slot holds no releasable pointer
+
+			void * slot = ctx->GetAddressOfVar(j, i, true, true);
+			if(!slot)
+				continue;
+
+			bool pointerSlot = (slotTypeId & asTYPEID_OBJHANDLE) != 0;
+			if(!pointerSlot)
+			{
+				// A non-handle object variable holds a raw pointer in its slot only when
+				// it lives on the heap; then GetAddressOfVar dereferences that pointer, so
+				// the value-address differs from the slot-address. Inline value locals
+				// return the same address for both and must be left alone.
+				void * valueAddr = ctx->GetAddressOfVar(j, i, false, true);
+				pointerSlot = (valueAddr != slot);
+			}
+
+			if(pointerSlot)
+				*(void**)slot = nullptr;
+		}
+	}
+
 //write variable contents
 //	(PREPARED is handled up-front via re-Prepare; only SUSPENDED reaches here)
+
+	// A by-reference parameter (&inout, unsafe refs) does not own storage: its slot
+	// holds a POINTER into another frame — the caller variable it aliases. The writer
+	// unified the two by address, so the aliased caller local and the reference slot
+	// carry the SAME object id (StackVar::object). We cannot restore such a slot by
+	// dereferencing (the pointer is fresh stack garbage) and we cannot give it private
+	// storage (the aliasing — the callee writing through the caller's variable — is the
+	// whole point). Instead, restore every OWNED variable first, remembering where each
+	// object id landed, then point each reference slot at the restored storage of its id.
+	// The passes matter because the callee frame (innermost) is restored before its
+	// caller, so the alias target does not yet exist when the reference slot is seen.
+	std::unordered_map<uint32_t, void*> restoredById;
+	struct DeferredRef { void ** slot; uint32_t object; };
+	std::vector<DeferredRef> deferredRefs;
 
 	StackVar var;
 	for(uint32_t i = 0; i < ctx->GetCallstackSize(); ++i)
@@ -423,8 +524,42 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 			auto typeInfo = reader->LoadTypeId(var.typeId);
 
+			// Is this slot a by-reference primitive/value parameter? Such slots hold a
+			// pointer AngelScript dereferences, so the value-address (dereferenced) and
+			// the slot-address (raw) differ. Owned inline primitives/values return the
+			// same address for both. Handles/objects take the dontDereference paths in
+			// zLoadVariable and are never dereferenced here, so restrict the alias
+			// handling to the two branches that DO dereference (primitive and value).
+			bool derefBranch = false;
+			if(typeInfo > 0 && typeInfo <= asTYPEID_DOUBLE)
+				derefBranch = true;
+			else if(auto ti = reader->GetEngine()->GetTypeInfoById(typeInfo);
+			        ti && (ti->GetFlags() & asOBJ_VALUE)
+			        && !(typeInfo & asTYPEID_OBJHANDLE) && !ti->GetFuncdefSignature())
+				derefBranch = true;
+
+			if(derefBranch
+			&& ctx->GetAddressOfVar(j, i, false, true) != ctx->GetAddressOfVar(j, i, true, true))
+			{
+				// Reference parameter: defer until its aliased id is restored.
+				deferredRefs.push_back(
+					DeferredRef{ (void**)ctx->GetAddressOfVar(j, i, true, true), var.object });
+				continue;
+			}
+
 			zLoadVariable(reader, ctx, j, i, var.object, typeInfo);
+
+			// Remember the storage of each OWNED object id so a reference parameter that
+			// aliases it can be re-pointed here (record the value storage, not the slot).
+			if(void * owned = ctx->GetAddressOfVar(j, i, false, true))
+				restoredById.emplace(var.object, owned);
 		}
+	}
+
+	for(auto & d : deferredRefs)
+	{
+		auto it = restoredById.find(d.object);
+		*d.slot = (it != restoredById.end()) ? it->second : nullptr;
 	}
 
 	ctx->FinishDeserialization();

@@ -63,6 +63,85 @@ Context depth: a **6-frame** deep call stack resumes with every frame's local in
 **re-save of a restored context** (save→load→save→load→resume) is stable; `dictionary`,
 `any`, and `grid` context stack locals all survive suspend (only `array` — R11 — does not).
 
+## Third red-hunt pass (2026-07-02) — value-type container elements + context stack locals
+
+Motivation: continue driving on the two moving surfaces (context serialization after
+Andreas's upstream revision; add-on container depth). This pass targeted the seams the
+user flagged — how a container actually *accesses* its elements (`At()` vs the
+dictionary/any value union) and what types can live on a suspended stack. **8 confirmed
+reds** (all Family B/C/D context stack-locals), each paired with a GREEN contrast that
+localizes it, across **3 distinct root causes**. New tests:
+`tests/test_container_value_types.cpp`, `tests/test_context_local_types.cpp`.
+
+**Resolution (2026-07-02, subagent-driven TDD fix pass): all 8 Family B/C/D reds are
+GREEN under ASan+UBSan; full suite 115/115.** Production changes confined to
+`src/z_zodiaccontext.cpp` and `include/zodiac_addon.hpp` — no test weakened. Three root
+causes:
+
+1. **Uninitialized handle/object stack slots (Family B + Family D resume-side).** The
+   context stack is `asNEWARRAY`, not zeroed; a compiled function relies on
+   `PrepareScriptFunction`'s entry-time nulling of every onHeap object/handle slot (plus
+   `asBC_ClrVPtr` at declarations). A rebuilt frame skips that, so any slot whose
+   declaration is *after* the suspend point (or a dead anonymous temporary) keeps stack
+   garbage; the first `asBC_RefCpyV` on resume *releases* that garbage → SEGV. Fix: a
+   pre-restore pass in `ZodiacLoad` nulls every onHeap object/handle slot (inline value
+   slots detected by value-addr == slot-addr and left alone), mirroring
+   `PrepareScriptFunction`; live in-scope vars are then restored on top.
+2. **`ref`/`weakref` (`asOBJ_ASHANDLE`) value locals (Family D).** Their `Set()` releases
+   the prior reference first, so a raw slot makes it release garbage; they also need
+   8-byte alignment the 4-byte stack slot can't give (UBSan). Fix: construct+onLoad in an
+   aligned `CreateScriptObject` instance, then byte-relocate into the slot (ASHANDLE types
+   hold only external pointers — trivially relocatable) and release the emptied husk. The
+   fix is **gated on `asOBJ_ASHANDLE`** — plain value types keep the raw-dst path, because
+   `std::string` SSO keeps a self-pointer and must NOT be byte-relocated (the un-gated
+   version regressed `ContextFrames.MixedLocalsSurviveSuspend`). Save-side glue in
+   `zodiac_addon.hpp` now reads handles/weakrefs through an aligned copy to kill the
+   symmetric misaligned-member-call UBSan reports.
+3. **`&inout` reference-parameter frames (Family C).** A ref-param slot holds a pointer
+   into the caller frame, not owned storage; the old code dereferenced garbage. Fix: a
+   two-pass restore — restore every OWNED var first (recording where each object id
+   landed), defer ref slots (detected by dereferenced-addr ≠ raw slot-addr on the
+   primitive/value deref branches), then re-point each deferred slot at its aliased id's
+   restored storage. Two passes because the callee frame is restored before its caller.
+
+Known edge (untested): a reference that aliases an id never restored inline falls back to
+`nullptr` — not hit by any current test; flag if future tests add reference-to-object params.
+
+**Correction (2026-07-02, subagent-driven TDD fix pass): Family A (T1) was a THIRD
+false positive, not a library red.** `ContainerValueType.NonPodInDictionary` / `NonPodInAny`
+failed because the *test's own* `Widget` copy-constructor was registered with the OBJFIRST
+parameter order `(void* m, const Widget& o)` while declared `asCALL_CDECL_OBJLAST` — so AS
+passed the source into `m` and the uninitialized destination into `o`, corrupting every
+Widget copy at `dictionary.set`/`any.store` time in `setup()`, *before Zodiac ran*. Proven
+by a standalone no-Zodiac repro. Reordering the params to `(const Widget& o, void* m)`
+makes all 8 `ContainerValueType` tests green with **zero production change**. The S3
+byte-length lead was a red herring: `GetByteLengthOfType` returns `GetSize()` (=4), not 0,
+and the value payload serializes via the type's `onSave`/`onLoad`, not a raw byte copy.
+This is the same R9 "check how the container is *actually* accessed" trap.
+
+Two earlier test-access false positives were also caught during the red-hunt (the R9 trap):
+an empty-`ref` test that used the handle-deref idiom on an `asOBJ_ASHANDLE` inline value,
+and a `Vec2 &inout` test that failed to *compile* (needs `asEP_ALLOW_UNSAFE_REFERENCES`)
+rather than at round-trip.
+
+| # | Family / Test(s) | Symptom | Likely root cause / anchor |
+|---|------------------|---------|----------------------------|
+| ~~T1~~ | ~~**A** `ContainerValueType.NonPodInDictionary`, `NonPodInAny`~~ | **FALSE POSITIVE** — test-harness bug, not a Zodiac red. Widget copy-ctor registered OBJFIRST-shaped `(void* m, const Widget& o)` under `asCALL_CDECL_OBJLAST` → Widget corrupted at `setup()` copy time, before Zodiac ran. Fixed by reordering params to `(const Widget& o, void* m)`; all 8 pass with no production change. | (n/a — see Correction note above) |
+| T2 | **B** `ContextLocalType.NestedArrayLocal_ListInit`, `_Resize`, `NestedStringArrayLocal`, `NestedArrayHandleLocal` | A **nested container** (`array<array<...>>`) as a live **stack local** → **SEGV** in `CScriptArray::Release` on resume. The top-level global and script-class-member equivalents PASS. | The four repros pin it: **not** the list-buffer temp (`_Resize` crashes), **not** value-vs-handle (`@`-handle crashes), int and string leaves both crash. The suspended-frame restore of a stack local whose *elements are themselves containers* is wrong (`z_zodiaccontext.cpp` `zLoadVariable` app-object/template branch + writer var walk). |
+| T3 | **C** `ContextLocalType.IntRefParamFrame`, `ValueTypeRefParamFrame` | A paused **`&inout` reference-parameter** frame (unsafe refs enabled) → **SEGV** on resume, for both a primitive and a value type. | The reference/`dontDereference` restore slot in `zLoadVariable`: a reference-param local is a *pointer to caller storage*, not owned value storage. `GetAddressOfVar` dereference flag / `SaveScriptObject` of a reference slot is mishandled. `z_zodiaccontext.cpp:286`. |
+| T4 | **D** `ContextLocalType.RefHandleLocal`, `WeakRefLocal` | A **`ref` (CScriptHandle)** or **`weakref`** value-type **stack local** → UBSan **misaligned member call** on the handle object inside the add-on glue (`zodiac_addon.hpp:511/568`), then **SEGV** in `Set()`. POD/non-POD value locals PASS. | The suspended-frame slot address handed to the ASHANDLE/weakref save+load glue is off (misaligned → wrong pointer). Specific to `asOBJ_ASHANDLE`/weakref value types on the stack; interacts with `zLoadVariable`'s value-object branch and the writer's context-var address. |
+
+Every red is a genuine library defect (UBSan/ASan traces or `0xBEBEBEBE` payloads), not a
+test-access artifact. Crashers fail cleanly under `ctest` per-test isolation.
+
+### Reassuring PASSES from this pass (localizing contrasts)
+
+`array<Vec2>`, `array<Widget>`, `grid<Vec2>`, `grid<Widget>` (value-type elements via
+`At()`); `dictionary`/`any` holding a **POD** `Vec2` value; `Vec2`/`Widget` **value** stack
+locals; **funcdef** and **delegate** stack locals; and (from probing, not kept) null-handle
+array elements, empty `ref`, cross-array object identity, `weakref` in an array, `array<Op@>`
+funcdef-in-container, `grid<array<int>@>`, nested container *globals* and *members*.
+
 ## Structural / static findings (not expressible as a runtime red)
 
 | # | Location | Issue |
