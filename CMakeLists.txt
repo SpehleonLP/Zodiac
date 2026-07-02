@@ -69,6 +69,22 @@ target_include_directories(zodiac PUBLIC
 target_compile_definitions(zodiac PUBLIC HAVE_ZODIAC=1)
 target_link_libraries(zodiac PUBLIC angelscript as_addons)
 
+# Opt-in ASan instrumentation of the Zodiac library itself (default OFF). The
+# library is normally NOT instrumented: the memory-safety regression tests assert
+# the trust-boundary CONTRACT (a malformed image is rejected with a Zodiac::Code,
+# a valid save records the right byte counts) behaviorally, so they are red on a
+# stock build and green once fixed. Turning this ON additionally catches the bad
+# ACCESS itself at its source line under ASan — useful when reproducing a defect —
+# but it makes any still-unfixed defect abort the whole suite, so it is not the
+# default. ASan only (UBSan trips pervasively on the reader's intentional unaligned
+# reads of on-disk structs from the mmap'd file).
+option(ZODIAC_INSTRUMENT_LIB "ASan-instrument the zodiac library itself" OFF)
+if(ZODIAC_INSTRUMENT_LIB AND NOT ZODIAC_NO_SANITIZERS)
+    target_compile_options(zodiac PRIVATE
+        -fsanitize=address -fno-omit-frame-pointer)
+    target_link_options(zodiac PUBLIC -fsanitize=address)
+endif()
+
 enable_testing()
 if(ZODIAC_BUILD_TESTS)
     add_subdirectory(tests)

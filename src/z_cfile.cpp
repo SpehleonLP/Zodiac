@@ -124,7 +124,7 @@ void zCFile::PushSubFile(uint offset, uint byteLength)
 	byteLength = offset+byteLength;
 
 //need to check becuase of overflows
-	if(!(offset < byteLength && byteLength < stack[0].end))
+	if(!(offset <= byteLength && byteLength <= stack[0].end))
 	{
 		throw Exception(zE_BadSubFileAddress);
 	}

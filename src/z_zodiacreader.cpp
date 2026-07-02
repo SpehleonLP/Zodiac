@@ -808,7 +808,7 @@ void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 	}
 
 
-	if(address > addressTableLength())
+	if(address >= addressTableLength())
 		throw Exception(zE_BadObjectAddress);
 
 	if(m_loadedObjects[address].ptr)
@@ -828,6 +828,13 @@ void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 		return;
 
 	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
+
+//Verify() skips per-property validation for typeIds in the template band
+//[typeInfoLength, typeTableLength) on the promise they never index m_typeInfo. Such
+//an entry.typeId would misread a zCTypeInfo-shaped slice of another table and walk
+//m_properties out of bounds; reject it before it is used to index m_typeInfo.
+	if(m_entries[address].typeId >= typeInfoLength())
+		throw Exception(zE_BadTypeId);
 
 	auto & zTypeInfo = m_typeInfo[m_entries[address].typeId];
 	asIScriptObject * ref = (asIScriptObject*)dst;
@@ -923,6 +930,13 @@ void zCZodiacReader::LoadScriptObjectImpl(void * dst, int address, int asTypeId,
 	{
 		void * ptr{};
 		auto ownr = m_entries[address].owner;
+
+//A self-owning entry (owner == its own address) would re-enter LoadScriptObjectImpl
+//on the same, not-yet-registered index below and recurse until the C stack overflows.
+//Verify() only bounds owner < addressTableLength(); it never rejects self-reference.
+//Reject it here as malformed input rather than crash.
+		if(ownr == (uint32_t)address)
+			throw Exception(zE_BadObjectAddress);
 		auto ownrTypeId =  LoadTypeId(m_entries[ownr].typeId);
 
 //load owner if it isn't loaded (check to avoid addreffing it i guess)
@@ -1060,6 +1074,11 @@ void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
 {
 	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
 
+//Reject a template-band entry.typeId that Verify() admitted without property
+//validation before it is used to index m_typeInfo/m_properties (see PopulateTable).
+	if(m_entries[address].typeId >= typeInfoLength())
+		throw Exception(zE_BadTypeId);
+
 	auto & zTypeInfo = m_typeInfo[m_entries[address].typeId];
 	asIScriptObject * ref = (asIScriptObject*)dst;
 
@@ -1096,8 +1115,16 @@ void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
 
 		assert(p->writeType == typeId);
 
+//A primitive member whose stored (source) width differs from the live (destination)
+//width must be CONVERTED src->dst, like top-level primitives (RestorePrimitive), not
+//memcpy'd at the destination width -- copying the wider destination width out of a
+//narrower stored slot over-reads the source buffer. Non-primitives keep the original
+//path (their src type is an address index, not an inline value).
+		if(typeId <= asTYPEID_DOUBLE)
+			RestorePrimitive(offset, typeId, read, p->readType);
+		else
 //app objects don't have an owner so it shouldn't cause an infinite loop
-		RestoreScriptObject(offset, read, typeId);
+			RestoreScriptObject(offset, read, typeId);
 	}
 }
 
@@ -1189,7 +1216,7 @@ int zCZodiacReader::LoadTypeId(int id)
 asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 {
 	if(id <= 0) return nullptr;
-	if((uint)id > functionTableLength())
+	if((uint)id >= functionTableLength())
 		throw Exception(zE_BadObjectAddress);
 
 	auto & function = GetFunctions()[id];

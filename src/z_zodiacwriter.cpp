@@ -175,13 +175,27 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 			}
 			else if(childId & asTYPEID_SCRIPTOBJECT)
 			{
+				// The on-disk slot for a script-object member is a single 4-byte
+				// object index. Write<T> with the default count of 1 emits exactly
+				// sizeof(uint32_t) bytes; the property's recorded byteLength is then
+				// recomputed from tell() below to match (4). (The original code
+				// passed sizeof(uint32_t) as the *element count*, writing 16 bytes
+				// and over-reading 12 bytes past a 4-byte local.)
 				uint32_t id_no = SaveScriptObject(address, childId, obj);
-				m_file->Write(&id_no, sizeof(uint32_t));
+				m_file->Write(&id_no);
 			}
 			else if((childId & asTYPEID_APPOBJECT) || (childId & asTYPEID_TEMPLATE))
 			{
 				if(WriteDelegate(address, childId))
+				{
+					// WriteDelegate emitted a single 4-byte function index for a
+					// funcdef/delegate member; recompute the recorded byteLength to
+					// match (the initial GetByteLengthOfType value is sizeof(void*),
+					// and the continue below skips the shared recompute at loop end).
+					if(prevProp)
+						prevProp->byteLength = (m_file->tell() - begin) - prevProp->offset;
 					continue;
+				}
 
 				auto entry = m_parent->GetTypeEntryFromAsTypeId(childId);
 
@@ -203,8 +217,10 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 					node.owner = obj;
 					node.save_func = entry->onSave;
 
-					int id_no = EnqueueNode(node);
-					m_file->Write(&id_no, sizeof(uint32_t));
+					// Single 4-byte object index, same as the scriptobject member
+					// above; byteLength is recomputed from tell() below to match.
+					uint32_t id_no = (uint32_t)EnqueueNode(node);
+					m_file->Write(&id_no);
 				}
 			}
 			else
@@ -265,8 +281,10 @@ bool zCZodiacWriter::WriteDelegate(void const* ptr, int typeId)
 
 	if(typeInfo->GetFuncdefSignature())
 	{
-		int value = SaveFunction(reinterpret_cast<asIScriptFunction const*>(ptr));
-		m_file->Write(&value, sizeof(value));
+		// A funcdef/delegate member serializes as a single 4-byte function index;
+		// the reader reads it back as one uint32_t (RestoreFunction).
+		uint32_t value = (uint32_t)SaveFunction(reinterpret_cast<asIScriptFunction const*>(ptr));
+		m_file->Write(&value);
 		return true;
 	}
 

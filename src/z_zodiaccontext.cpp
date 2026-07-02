@@ -206,8 +206,34 @@ void Zodiac::ZodiacSave(zIZodiacWriter* writer, asIScriptContext const* _ctx, in
 	// and re-Prepare on load, which faithfully reproduces asEXECUTION_PREPARED.
 	if(status == asEXECUTION_PREPARED)
 	{
-		uint32_t fn = writer->SaveFunction(ctx->GetFunction(0));
+		asIScriptFunction * initialFn = ctx->GetFunction(0);
+		uint32_t fn = writer->SaveFunction(initialFn);
 		file->Write(&fn);
+
+		// The arguments already pushed onto the prepared frame (Prepare() + SetArg*)
+		// must be persisted too, or Execute() after the round-trip runs with zeroed
+		// slots. GetAddressOfVar is unusable here (programPointer == 0 in PREPARED
+		// state), so reach the pushed slots through GetAddressOfArg — valid only in
+		// PREPARED state — and serialize each through the SAME SaveScriptObject/StackVar
+		// machinery the suspended-frame variable loop uses. The load side re-Prepare()s
+		// and restores these slots via GetAddressOfArg.
+		uint32_t argCount = initialFn ? initialFn->GetParamCount() : 0;
+		file->Write(&argCount);
+
+		StackVar arg;
+		arg.stackLevel = 0;
+		for(uint32_t a = 0; a < argCount; ++a)
+		{
+			int argTypeId = 0;
+			initialFn->GetParam(a, &argTypeId);
+
+			void * argAddr = ctx->GetAddressOfArg(a);
+
+			arg.varId  = a;
+			arg.typeId = argAddr ? writer->SaveTypeId(argTypeId) : 0;
+			arg.object = argAddr ? writer->SaveScriptObject(argAddr, argTypeId) : 0;
+			file->Write(&arg);
+		}
 		return;
 	}
 
@@ -401,6 +427,39 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 		if(func)
 		{
 			ctx->Prepare(func);
+
+			// Restore the pushed argument frame that ZodiacSave persisted. After
+			// Prepare() the slots are addressable through GetAddressOfArg (still
+			// PREPARED state); load each with the same flags zLoadVariable uses:
+			// primitives load by value, handles null-then-load an owned reference the
+			// prepared frame's clean-up will release.
+			uint32_t argCount{};
+			file->Read(&argCount);
+
+			StackVar arg;
+			for(uint32_t a = 0; a < argCount; ++a)
+			{
+				if(sizeof(arg) != file->Read(&arg)) { func->Release(); throw zE_EndOfFile; }
+
+				if(arg.typeId == 0)
+					continue;
+
+				int argTypeId = reader->LoadTypeId(arg.typeId);
+				void * argAddr = ctx->GetAddressOfArg(a);
+				if(!argAddr)
+					continue;
+
+				if(argTypeId <= asTYPEID_DOUBLE)
+					reader->LoadScriptObject(argAddr, arg.object, argTypeId, true);
+				else if(argTypeId & asTYPEID_OBJHANDLE)
+				{
+					*(void**)argAddr = nullptr;
+					reader->LoadScriptObject(argAddr, arg.object, argTypeId, false);
+				}
+				else
+					reader->LoadScriptObject(argAddr, arg.object, argTypeId, true);
+			}
+
 			func->Release();
 		}
 		return;
@@ -524,12 +583,31 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 			auto typeInfo = reader->LoadTypeId(var.typeId);
 
-			// Is this slot a by-reference primitive/value parameter? Such slots hold a
-			// pointer AngelScript dereferences, so the value-address (dereferenced) and
-			// the slot-address (raw) differ. Owned inline primitives/values return the
-			// same address for both. Handles/objects take the dontDereference paths in
-			// zLoadVariable and are never dereferenced here, so restrict the alias
-			// handling to the two branches that DO dereference (primitive and value).
+			// Is this slot a by-reference parameter? A reference parameter does not own
+			// storage — its slot holds a pointer aliasing the caller's variable, so it
+			// must be re-pointed at the restored aliased storage taking NO owned
+			// reference. The reliable signal is the variable's type modifier
+			// (asTM_INOUTREF for unsafe &inout / &in / &out), which GetVar derives from
+			// the static function signature (valid on the reconstructed frame). This is
+			// necessary for OBJECT/HANDLE ref params: the address-differ heuristic below
+			// cannot tell an aliasing reference from an owned heap object, and SaveTypeId
+			// strips asTYPEID_OBJHANDLE so the loaded typeId cannot be inspected for
+			// handle-ness. Without this an object/handle ref param would fall to
+			// zLoadVariable and deposit an owned (AddRef'd) reference into a slot the
+			// callee never releases (AngelScript skips &-parameter slots on cleanup) — a
+			// leak that also drives a use-after-free on resume.
+			asETypeModifiers mods = asTM_NONE;
+			{
+				int mtid = 0;
+				ctx->GetVar(j, i, nullptr, &mtid, &mods, nullptr, nullptr);
+			}
+			bool isRefParam = (mods & asTM_INOUTREF) != 0;
+
+			// The primitive/value ref-param path: such slots hold a pointer AngelScript
+			// dereferences, so the value-address (dereferenced) and the slot-address
+			// (raw) differ. Owned inline primitives/values return the same address for
+			// both. These two branches DO dereference in zLoadVariable, so the alias is
+			// restored by re-pointing the raw slot.
 			bool derefBranch = false;
 			if(typeInfo > 0 && typeInfo <= asTYPEID_DOUBLE)
 				derefBranch = true;
@@ -541,10 +619,21 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			if(derefBranch
 			&& ctx->GetAddressOfVar(j, i, false, true) != ctx->GetAddressOfVar(j, i, true, true))
 			{
-				// Reference parameter: defer until its aliased id is restored.
+				// Primitive/value reference parameter: defer until its aliased id is restored.
 				deferredRefs.push_back(
 					DeferredRef{ (void**)ctx->GetAddressOfVar(j, i, true, true), var.object });
 				continue;
+			}
+			// Object/handle reference parameter: same alias treatment. Its slot is the
+			// raw pointer slot (dontDereference); re-point it at the aliased storage with
+			// no owned reference, so net refcount stays correct after frame cleanup.
+			else if(isRefParam)
+			{
+				if(void ** slot = (void**)ctx->GetAddressOfVar(j, i, true, true))
+				{
+					deferredRefs.push_back(DeferredRef{ slot, var.object });
+					continue;
+				}
 			}
 
 			zLoadVariable(reader, ctx, j, i, var.object, typeInfo);

@@ -47,8 +47,8 @@ protected:
 
 	FILE * file{};
 	bool   ownsFile{};
-	uint8_t stackSize{};
-	uint8_t stackPos{};
+	uint32_t stackSize{};
+	uint32_t stackPos{};
 	StackFrame * stack{};
 };
 

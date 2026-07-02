@@ -34,7 +34,7 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 	try
 	{
 		if(m_inProgress.exchange(true))
-			throw zE_AlreadyLoading;
+			throw zE_AlreadySaving;
 
 		ClearBoolOnDestruct clearer(m_inProgress);
 		error_code = zE_Success;
@@ -96,9 +96,9 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 
 	if(m_inProgress.exchange(true))
 	{
-		error_string = Exception::ToString(zE_AlreadySaving);
-		error_code   = zE_AlreadySaving;
-		return zE_AlreadySaving;
+		error_string = Exception::ToString(zE_AlreadyLoading);
+		error_code   = zE_AlreadyLoading;
+		return zE_AlreadyLoading;
 	}
 
 	ClearBoolOnDestruct clearer(m_inProgress);
@@ -135,17 +135,32 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		return error_code;
 	}
 
-	if(m_preRestoreCallback)
+	try
 	{
-		(m_preRestoreCallback)(m_userData);
+		if(m_preRestoreCallback)
+		{
+			(m_preRestoreCallback)(m_userData);
+		}
+
+		reader->RestoreGlobalVariables(m_engine);
+		reader->ReadSaveData(m_saveDataReadCallback, m_userData);
+
+		if(m_postRestoreCallback)
+		{
+			(m_postRestoreCallback)(m_userData);
+		}
 	}
-
-	reader->RestoreGlobalVariables(m_engine);
-	reader->ReadSaveData(m_saveDataReadCallback, m_userData);
-
-	if(m_postRestoreCallback)
+	catch(Exception & e)
 	{
-		(m_postRestoreCallback)(m_userData);
+		error_string = std::move(e.text);
+		error_code   = e.code;
+		return error_code;
+	}
+	catch(Code & c)
+	{
+		error_string = Exception::ToString(c);
+		error_code   = c;
+		return error_code;
 	}
 
 	if(error_code == zE_Success)
