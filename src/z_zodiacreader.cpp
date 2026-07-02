@@ -403,8 +403,29 @@ void zCZodiacReader::RestoreGlobalVariables(asIScriptEngine * engine)
 			mod->GetGlobalVar(j, &name, &nameSpace, &typeId);
 			zCGlobalInfo const* global = GetGlobalVar(index, name, nameSpace, j);
 
-			if(global)
-				LoadScriptObject(mod->GetAddressOfGlobalVar(j), global->address & ~zGLOBAL_FUNCTION_ADDRESS, typeId);
+			if(!global)
+				continue;
+
+			void * slot = mod->GetAddressOfGlobalVar(j);
+
+			// A handle global may already hold an object the application created
+			// while (re)building the module -- e.g. the bytecode-less restore path,
+			// where the app rebuilds module + runs its init before LoadFromFile.
+			// DocumentGlobalVariables/PopulateTable cannot register handle globals
+			// (dst is the pointer slot, not the object), so LoadScriptObject below
+			// creates a fresh object and overwrites the slot. Release the prior
+			// value first, or that app-created object (and the type it pins) leaks.
+			// The slot is a real, initialized global (null or a live handle), never
+			// the uninitialized stack storage that context-var slots can be, so a
+			// release here is safe -- which is why this cannot live in
+			// LoadScriptObject itself.
+			if((typeId & asTYPEID_OBJHANDLE) && *(void**)slot)
+			{
+				engine->ReleaseScriptObject(*(void**)slot, engine->GetTypeInfoById(typeId));
+				*(void**)slot = nullptr;
+			}
+
+			LoadScriptObject(slot, global->address & ~zGLOBAL_FUNCTION_ADDRESS, typeId);
 		}
 	}
 }

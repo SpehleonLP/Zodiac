@@ -29,7 +29,7 @@ fail cleanly. Full run minus the three crashers: **49 passed / 4 failed of 53**.
 
 | # | Test | Symptom | Likely root cause / anchor |
 |---|------|---------|----------------------------|
-| R8 | `EdgeBehaviors.SaveWithoutBytecode` | a *single* successful bytecode-less round-trip leaks **556 B / 2 allocs** (ASan, leak-detect on) — trace roots at `asCBuilder::RegisterClass` during the load-side recompile | the restore path retains a reference to a recompiled script type/module that the engine can no longer free at `Release`. Distinct from R4 (that was the double-load path); this reproduces on one load. Not yet fixed — out of Parts C/D/G scope; candidate for Part E/F or a follow-up. Test still passes (assertions ok); leak only visible with leak detection on. |
+| R8 | `EdgeBehaviors.SaveWithoutBytecode` | a *single* successful bytecode-less round-trip leaks **556 B / 2 allocs** (ASan, leak-detect on) — trace roots at `asCBuilder::RegisterClass` during the load-side recompile | **FIXED (2026-07-02, Part F follow-up).** Root cause was `RestoreGlobalVariables`: a handle global (`Box@ box`) already holding an app-created object (the load-side rebuild ran the module's `setup()`) was overwritten by the restored object without releasing the prior value. `PopulateTable`/`DocumentGlobalVariables` cannot register handle globals (their `dst` is the pointer slot, not the object), so the old object was never unified and leaked — pinning its class type (the 520 B indirect alloc). Fix releases the prior handle value before `LoadScriptObject` overwrites the global slot. Whole suite now leak-clean under ASan (72 tests). |
 
 ## Structural / static findings (not expressible as a runtime red)
 
