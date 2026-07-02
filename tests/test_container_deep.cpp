@@ -141,8 +141,13 @@ TEST(ContainerDeep, NestedIntArray)
 	ASSERT_NE(outer, nullptr);
 	ASSERT_EQ(outer->GetSize(), 2u);
 
-	auto row0 = *static_cast<CScriptArray**>(outer->At(0));
-	auto row1 = *static_cast<CScriptArray**>(outer->At(1));
+	// array<int> is a reference type, so array<array<int>> stores its elements as
+	// (non-handle) ref objects: CScriptArray::At already dereferences to the inner
+	// object (stock scriptarray.cpp:963), so a single cast yields the row -- a
+	// second `*` (the handle-slot idiom used for array<Node@>) would read into the
+	// object and crash.
+	auto row0 = static_cast<CScriptArray*>(outer->At(0));
+	auto row1 = static_cast<CScriptArray*>(outer->At(1));
 	ASSERT_NE(row0, nullptr);
 	ASSERT_NE(row1, nullptr);
 	ASSERT_EQ(row0->GetSize(), 3u);
@@ -278,7 +283,8 @@ TEST(ContainerDeep, NestedStringArray)
 	auto outer = GlobalObject<CScriptArray>(engine.get(), "a");
 	ASSERT_NE(outer, nullptr);
 	ASSERT_EQ(outer->GetSize(), 2u);
-	auto row0 = *static_cast<CScriptArray**>(outer->At(0));
+	// Non-handle ref element: At() already dereferences to the inner array.
+	auto row0 = static_cast<CScriptArray*>(outer->At(0));
 	ASSERT_NE(row0, nullptr);
 	ASSERT_EQ(row0->GetSize(), 2u);
 	EXPECT_EQ(*static_cast<std::string*>(row0->At(1)), "bb");
@@ -370,7 +376,10 @@ TEST(ContainerDeep, ScriptClassWithArrayMember)
 	LoadEngine(engine.get(), image);
 	auto bag = GlobalObject<asIScriptObject>(engine.get(), "g");
 	ASSERT_NE(bag, nullptr);
-	auto items = *static_cast<CScriptArray**>(bag->GetAddressOfProperty(0));
+	// array<int> is a reference type, so GetAddressOfProperty already dereferences
+	// the member to the array object (as_scriptobject.cpp:803-805): a single cast
+	// yields it. A second `*` (the handle idiom) would read into the object.
+	auto items = static_cast<CScriptArray*>(bag->GetAddressOfProperty(0));
 	ASSERT_NE(items, nullptr);
 	ASSERT_EQ(items->GetSize(), 3u);
 	EXPECT_EQ(*static_cast<int*>(items->At(2)), 3);
@@ -400,7 +409,8 @@ TEST(ContainerDeep, ScriptClassWithStringArrayMember)
 	LoadEngine(engine.get(), image);
 	auto bag = GlobalObject<asIScriptObject>(engine.get(), "g");
 	ASSERT_NE(bag, nullptr);
-	auto tags = *static_cast<CScriptArray**>(bag->GetAddressOfProperty(0));
+	// Non-handle ref member: GetAddressOfProperty already dereferences to the array.
+	auto tags = static_cast<CScriptArray*>(bag->GetAddressOfProperty(0));
 	ASSERT_NE(tags, nullptr);
 	ASSERT_EQ(tags->GetSize(), 2u);
 	EXPECT_EQ(*static_cast<std::string*>(tags->At(1)), "yy");
@@ -429,7 +439,9 @@ TEST(ContainerDeep, ScriptClassWithDictionaryMember)
 	LoadEngine(engine.get(), image);
 	auto bag = GlobalObject<asIScriptObject>(engine.get(), "g");
 	ASSERT_NE(bag, nullptr);
-	auto d = *static_cast<CScriptDictionary**>(bag->GetAddressOfProperty(0));
+	// dictionary is a reference type: GetAddressOfProperty already dereferences the
+	// member to the dictionary object, so a single cast yields it.
+	auto d = static_cast<CScriptDictionary*>(bag->GetAddressOfProperty(0));
 	ASSERT_NE(d, nullptr);
 	asINT64 v = 0;
 	ASSERT_TRUE(d->Get("n", v));
