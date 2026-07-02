@@ -31,6 +31,33 @@ fail cleanly. Full run minus the three crashers: **49 passed / 4 failed of 53**.
 |---|------|---------|----------------------------|
 | R8 | `EdgeBehaviors.SaveWithoutBytecode` | a *single* successful bytecode-less round-trip leaks **556 B / 2 allocs** (ASan, leak-detect on) — trace roots at `asCBuilder::RegisterClass` during the load-side recompile | **FIXED (2026-07-02, Part F follow-up).** Root cause was `RestoreGlobalVariables`: a handle global (`Box@ box`) already holding an app-created object (the load-side rebuild ran the module's `setup()`) was overwritten by the restored object without releasing the prior value. `PopulateTable`/`DocumentGlobalVariables` cannot register handle globals (their `dst` is the pointer slot, not the object), so the old object was never unified and leaked — pinning its class type (the 520 B indirect alloc). Fix releases the prior handle value before `LoadScriptObject` overwrites the global slot. Whole suite now leak-clean under ASan (72 tests). |
 
+## Second red-hunt pass (2026-07-02) — context serialization + add-on depth
+
+Motivation: the context (call-stack) serialization API moved under Zodiac when
+Andreas revised the owner's upstream submission, and the Part A add-on coverage
+only tested each container one level deep (top-level `container@` global). This
+pass drove harder on both. **22 new tests, 11 red / 11 green** (all under
+ASan/UBSan; baseline 72 untouched). Crashers fail cleanly under `ctest`
+per-test isolation. New tests live in `tests/test_context_frames.cpp` and
+`tests/test_container_deep.cpp`.
+
+| # | Test(s) | Symptom | Likely root cause / anchor |
+|---|---------|---------|----------------------------|
+| R9 | `ContainerDeep.NestedIntArray`, `NestedStringArray`, `ScriptClassWithArrayMember`, `ScriptClassWithStringArrayMember`, `ScriptClassWithDictionaryMember` | A container reached as an **array element** or a **script-class member** (not as a top-level `container@` global) restores **corrupt**: `LoadFromFile` returns `zE_Success` but the element/member pointer is garbage → **SEGV** on first use (`CScriptArray::GetSize`). Top-level `container@` globals, `array<Node@>`, `array<dictionary@>`, `dictionary`-holding-`array` all PASS. | The object-graph member/element restore path mis-restores nested registered app objects (writer `GetByteLengthOfType` returning 0 for such members, S3, is a prime suspect; `WriteScriptObject`/member `readOffset`). Distinct from the handle-global restore path that the passing cases use. |
+| R10 | `ContainerDeep.AnyHoldsString`, `AnyEmpty` | `any` holding a **string** → **SEGV in `z_zodiacwriter.cpp:746 SaveString`** during save. `any` holding **nothing** → `CScriptAny::Retrieve` assert (`refTypeId` from a typeId-0 payload). `any` holding int64 / a script handle / an `array@` all PASS. | `any` save/load glue in `zodiac_addon.hpp`: the heap-value (string) payload passes a bad pointer/length to `SaveString`; the empty-`any` case is unguarded (stored typeId 0 routed through `Retrieve`). |
+| R11 | `ContextFrames.ArrayLocalSurvivesSuspend`, `MixedLocalsSurviveSuspend` | Saving a suspended context that has an **`array<int>` stack local** fails at **save** with `zE_BadTypeId` (-8). `dictionary` / `any` / `grid` context locals all PASS. | `SaveTypeId` on a **template** typeId (`array<T>`) for a context variable is rejected — the same `zE_BadTypeId` class as the (fixed) enum finding R3, now for template types in the context-var path (`z_zodiaccontext.cpp` `GetFromContext`/`SaveScriptObject` → writer `SaveTypeId`). |
+| R12 | `ContextFrames.ThisAliasesGlobalObject` | Suspending inside a **class method** whose `this` also aliases a **global handle**, then restoring, corrupts a refcount on resume: `asCAtomic::get` assert `value < 1000000` (garbage refcount ⇒ use-after-free class). | `CtxCallState` `this`-pointer restore (`PushFunction` → `GetThisPointer`/`objectId`) does not honor the already-loaded object when a global aliases the method receiver — the cross-root aliasing fix (R7) covers globals/members/locals but not the frame `this` slot. |
+| R13 | `ContextFrames.PreparedContextRoundTrip` | A context that was `Prepare()`d but **never Executed** (`asEXECUTION_PREPARED`) restores in state `asEXECUTION_SUSPENDED`, not `PREPARED`. It still runs to the right result, but the state is not preserved. | `ZodiacLoad` PREPARED branch: the frame is pushed/deserialized so the restored context reports SUSPENDED; the original prepared-but-unstarted state is not reconstructed. Lowest severity of this pass (behavioral, not a crash). |
+
+### Reassuring PASSES from this pass (not bugs — coverage that now exists)
+
+Add-on depth: `grid<Node@>` handle identity (element aliases a global), `grid<string>`,
+`dictionary` holding an `array@`, `array<dictionary@>`, `any` holding an `array@` handle,
+`dictionary` handle value aliasing a global.
+Context depth: a **6-frame** deep call stack resumes with every frame's local intact;
+**re-save of a restored context** (save→load→save→load→resume) is stable; `dictionary`,
+`any`, and `grid` context stack locals all survive suspend (only `array` — R11 — does not).
+
 ## Structural / static findings (not expressible as a runtime red)
 
 | # | Location | Issue |
