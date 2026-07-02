@@ -31,6 +31,14 @@ int zCZodiacWriter::EnqueueNode(Node node)
 			node.address = *(void const**)node.address;
 			node.asTypeId &= ~zTYPEID_OBJHANDLE;
 			node.owner = nullptr;
+
+	// A null handle to an app/template ref type (e.g. `array<int>@ p = null;`)
+	// has no object to enqueue. The scriptobject branch below maps a null address
+	// to asTYPEID_VOID, which matches the reserved null entry 0; app/template
+	// types skip that branch and would otherwise assign their real type to entry 0
+	// and trip zE_InconsistentObjectType. Return the null object id directly.
+			if(node.address == nullptr && !(node.asTypeId & asTYPEID_SCRIPTOBJECT))
+				return 0;
 		}
 
 		if(node.asTypeId & asTYPEID_SCRIPTOBJECT)
@@ -43,25 +51,17 @@ int zCZodiacWriter::EnqueueNode(Node node)
 	assert(node.asTypeId < 0 || (node.asTypeId & asTYPEID_OBJHANDLE) == false);
 
 	int address{};
-	int closest{};
 
-	if(!HaveAddress(node.address, &closest, &address))
+	if(!HaveAddress(node.address, &address))
 	{
 		if(node.asTypeId & asTYPEID_SCRIPTOBJECT)
 			node.zTypeId = zIZodiac::GetTypeId<asIScriptObject>();
 
-		m_addressIndex.insert(m_addressIndex.begin()+closest, {node.address, m_stack.size()});
 		address = m_stack.size();
+		m_addressMap.emplace(node.address, address);
 
 		assert(node.asTypeId != zTYPEID_OBJECT);
 		m_stack.push_back(node);
-
-#ifndef NDEBUG
-		for(uint32_t i = 1; i < m_addressIndex.size(); ++i)
-		{
-			assert(m_addressIndex[i-1].first < m_addressIndex[i].first);
-		}
-#endif
 
 		return m_stack.size()-1;
 	}
@@ -86,7 +86,6 @@ int zCZodiacWriter::EnqueueNode(Node node)
 			if(!(node.asTypeId & asTYPEID_SCRIPTOBJECT)
 			&  !(stack.asTypeId & asTYPEID_SCRIPTOBJECT))
 			{
-				HaveAddress(node.address, &closest, &address);
 				throw Exception(zE_InconsistentObjectType);
 			}
 		}
@@ -103,45 +102,15 @@ int zCZodiacWriter::EnqueueNode(Node node)
 	return address;
 }
 
-bool zCZodiacWriter::HaveAddress(void const* value, int * closest, int * address) const
+bool zCZodiacWriter::HaveAddress(void const* value, int * address) const
 {
-	int32_t min = 0;
-	int32_t max = m_addressIndex.size()-1;
+	auto it = m_addressMap.find(value);
 
-	while(max - min > 8)
-	{
-		int avg = (min+max)/2 + 1;
+	if(it == m_addressMap.end())
+		return false;
 
-		if(m_addressIndex[avg].first < value)
-		{
-			min = avg;
-		}
-		else if(m_addressIndex[avg].first > value)
-		{
-			max = avg;
-		}
-		else
-		{
-			if(closest) *closest = avg;
-			if(address) *address = m_addressIndex[avg].second;
-			return true;
-		}
-	}
-
-	for(int32_t i = min; i <= max; ++i)
-	{
-		if(m_addressIndex[i].first >= value)
-		{
-			if(closest) *closest = i;
-			if(address) *address = m_addressIndex[i].second;
-			return  (m_addressIndex[i].first == value);
-		}
-	}
-
-	if(closest) *closest = m_addressIndex.size();
-	if(address) *address = m_addressIndex.size();
-
-	return false;
+	if(address) *address = it->second;
+	return true;
 }
 
 void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
@@ -193,9 +162,16 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 				}
 			}
 
+			asITypeInfo * childType = (childId > asTYPEID_DOUBLE) ? GetEngine()->GetTypeInfoById(childId) : nullptr;
+
 			if(childId <= asTYPEID_DOUBLE)
 			{
 				m_file->Write(address,  GetEngine()->GetSizeOfPrimitiveType(childId));
+			}
+			else if(childType && (childType->GetFlags() & asOBJ_ENUM))
+			{
+//an enum value is just its underlying integer, stored inline like a primitive
+				m_file->Write(address, childType->GetSize());
 			}
 			else if(childId & asTYPEID_SCRIPTOBJECT)
 			{
@@ -216,7 +192,7 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 
 				if(!entry->onSave)
 				{
-					m_file->Write(ref, entry->byteLength);
+					m_file->Write(address, entry->byteLength);
 				}
 				else
 				{
@@ -246,6 +222,11 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 	{
 		int size = GetEngine()->GetSizeOfPrimitiveType(asTypeId);
 		m_file->Write(ref, size);
+	}
+	else if(auto enumType = GetEngine()->GetTypeInfoById(asTypeId); enumType && (enumType->GetFlags() & asOBJ_ENUM))
+	{
+//an enum value is just its underlying integer, stored inline like a primitive
+		m_file->Write(ref, enumType->GetSize());
 	}
 	else
 	{
@@ -303,12 +284,6 @@ void zCZodiacWriter::ProcessQueue()
 
 	for(uint32_t i = 0; i < m_stack.size(); ++i, ++m_progress)
 	{
-		if(i == 3)
-		{
-			int break_point = 0;
-			++break_point;
-		}
-
 		buffer.offset = m_file->tell();
 		buffer.typeId = SaveTypeId(m_stack[i].asTypeId);
 		buffer.owner = 0;
@@ -324,14 +299,13 @@ void zCZodiacWriter::ProcessQueue()
 	m_header.savedObjectLength = m_file->tell() - m_header.savedObjectOffset;
 
 	int address{};
-	int closest{};
 
 	for(uint32_t i = 0; i < m_stack.size(); ++i)
 	{
 		address = 0;
 
 		if(m_stack[i].owner != nullptr
-		&& !HaveAddress(m_stack[i].owner, &closest, &address))
+		&& !HaveAddress(m_stack[i].owner, &address))
 			throw Exception(zE_OwnerNotEncoded);
 
 		m_addressTable[i].owner  = address;
@@ -427,11 +401,12 @@ void zCZodiacWriter::WriteProperties()
 uint32_t zCZodiacWriter::CountTypes(asIScriptEngine * engine)
 {
 	auto N = engine->GetModuleCount();
-	uint32_t total =  engine->GetObjectTypeCount() + engine->GetFuncdefCount();
+	uint32_t total =  engine->GetObjectTypeCount() + engine->GetFuncdefCount() + engine->GetEnumCount();
 
 	for(uint32_t i = 0; i < N; ++i)
 	{
-		total += engine->GetModuleByIndex(i)->GetObjectTypeCount();
+		auto mod = engine->GetModuleByIndex(i);
+		total += mod->GetObjectTypeCount() + mod->GetEnumCount();
 	}
 
 	return total;
@@ -449,6 +424,11 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 		m_typeList.push_back(engine->GetObjectTypeByIndex(i)->GetTypeId());
 	}
 
+	for(uint32_t i = 0; i < engine->GetEnumCount(); ++i)
+	{
+		m_typeList.push_back(engine->GetEnumByIndex(i)->GetTypeId());
+	}
+
 	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
 	{
 		m_typeList.push_back(engine->GetFuncdefByIndex(i)->GetTypeId());
@@ -461,6 +441,11 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
 			m_typeList.push_back(mod->GetObjectTypeByIndex(j)->GetTypeId());
+		}
+
+		for(uint32_t j = 0; j < mod->GetEnumCount(); ++j)
+		{
+			m_typeList.push_back(mod->GetEnumByIndex(j)->GetTypeId());
 		}
 	}
 
@@ -500,6 +485,11 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 		buffer.push_back(WriteTypeInfo(engine, nullptr, typeInfo, false));
 	}
 
+	for(uint32_t i = 0; i < engine->GetEnumCount(); ++i)
+	{
+		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetEnumByIndex(i), false));
+	}
+
 	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
 	{
 		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetFuncdefByIndex(i), false));
@@ -516,6 +506,11 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
 			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
+		}
+
+		for(uint32_t j = 0; j < mod->GetEnumCount(); ++j)
+		{
+			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetEnumByIndex(j), false));
 		}
 
 		modules[i].typeInfoLength = buffer.size();
@@ -580,10 +575,10 @@ uint32_t zCZodiacWriter::GetByteLengthOfType(asIScriptEngine * engine, asIScript
 
 	asITypeInfo *type = engine->GetTypeInfoById(typeId);
 
-	if(type && (type->GetFlags() & asOBJ_POD) )
+	if(type)
 		return type->GetSize();
 
-//what to do??
+//unknown / unregistered type id
 	return 0;
 }
 
@@ -616,6 +611,20 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 
 	auto origin = m_file->tell();
 
+	// A funcdef-handle global's address is a FUNCTION-table index (SaveScriptObject
+	// routes funcdefs to SaveFunction), so flag it for the reader/Verify with the
+	// sentinel top bit. Non-funcdef globals index the object-address table as before.
+	auto markAddress = [this](uint32_t address, int typeId) -> uint32_t
+	{
+		if(address != 0 && (typeId & asTYPEID_APPOBJECT))
+		{
+			auto ti = GetEngine()->GetTypeInfoById(typeId);
+			if(ti && ti->GetFuncdefSignature())
+				return address | zGLOBAL_FUNCTION_ADDRESS;
+		}
+		return address;
+	};
+
 	for(uint32_t i = 0; i <  engine->GetModuleCount(); ++i)
 	{
 		modules[i].beginGlobalInfo = m_file->tell();
@@ -629,7 +638,7 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 			buffer.name = SaveString(name);
 			buffer.nameSpace = SaveString(nameSpace);
 			buffer.typeId   = typeId;
-			buffer.address = SaveScriptObject(mod->GetAddressOfGlobalVar(j), typeId, nullptr);
+			buffer.address = markAddress(SaveScriptObject(mod->GetAddressOfGlobalVar(j), typeId, nullptr), typeId);
 
 			m_file->Write(&buffer);
 		}
@@ -648,7 +657,7 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 		buffer.name = SaveString(name);
 		buffer.nameSpace = SaveString(nameSpace);
 		buffer.typeId   = typeId;
-		buffer.address = SaveScriptObject(address, typeId, nullptr);
+		buffer.address = markAddress(SaveScriptObject(address, typeId, nullptr), typeId);
 
 		m_file->Write(&buffer);
 	}
@@ -705,9 +714,27 @@ void zCZodiacWriter::WriteHeader()
 	m_file->Write(&m_header);
 }
 
+// Convenience overload for names/identifiers (type/namespace/module/declaration
+// names) that are legitimately C-strings. Content strings (the std::string
+// add-on value) must go through the length-explicit overload below so embedded
+// NUL bytes survive.
 int zCZodiacWriter::SaveString(const char * string)
 {
 	if(string == nullptr) return 0;
+	return SaveString(string, (uint32_t)strlen(string));
+}
+
+int zCZodiacWriter::SaveString(const char * data, uint32_t len)
+{
+	if(data == nullptr) return 0;
+
+	// A string with no embedded NUL in [0,len) is an ordinary C-string: route it
+	// through the strcmp-ordered dedup index so names/identifiers keep unifying.
+	// A string WITH an embedded NUL cannot participate in strcmp-ordered dedup
+	// (strcmp would compare only its pre-NUL prefix and could false-match a
+	// different entry), so it is stored fresh, length-explicit.
+	if(strnlen(data, len) != len)
+		return InsertString(data, len);
 
 	int32_t min = 0;
 	int32_t max = stringAddress.size()-1;
@@ -716,7 +743,7 @@ int zCZodiacWriter::SaveString(const char * string)
 	{
 		int avg = (min+max)/2 + 1;
 
-		int cmp = strcmp(&stringContents[stringAddress[avg]], string);
+		int cmp = strcmp(&stringContents[stringAddress[avg]], data);
 
 		if(cmp < 0)
 			min = avg;
@@ -728,33 +755,40 @@ int zCZodiacWriter::SaveString(const char * string)
 
 	for(int32_t i = min; i <= max; ++i)
 	{
-		int cmp = strcmp(&stringContents[stringAddress[i]], string);
+		int cmp = strcmp(&stringContents[stringAddress[i]], data);
 
 		if(cmp == 0)
 			return stringAddress[i];
 		else if(cmp > 0)
 		{
-			uint32_t address = InsertString(string);
+			uint32_t address = InsertString(data, len);
 			stringAddress.insert(stringAddress.begin()+i, address);
 			return address;
 		}
 	}
 
-	stringAddress.push_back(InsertString(string));
+	stringAddress.push_back(InsertString(data, len));
 
 	return stringAddress.back();
 }
 
-uint32_t zCZodiacWriter::InsertString(const char * string)
+// Appends a length-prefixed, NUL-terminated string record to the table:
+//   [uint32 len][len bytes of data][NUL]
+// and returns the byte offset of the DATA (i.e. one uint32 past the prefix).
+// Every stored offset points at the data start, so the strcmp-based dedup index
+// and the NUL-terminated convenience readers keep working unchanged; the
+// length-aware readers recover the exact byte count from the prefix at offset-4.
+uint32_t zCZodiacWriter::InsertString(const char * data, uint32_t len)
 {
-	uint32_t address = stringContents.size();
+	uint32_t prefix = stringContents.size();
+	stringContents.resize((size_t)prefix + sizeof(uint32_t) + len + 1);
 
-	auto len = strlen(string);
-	stringContents.resize(stringContents.size()+len+1);
-	strncpy(&stringContents[address], string, len);
-	stringContents[address+len] = 0;
+	memcpy(&stringContents[prefix], &len, sizeof(uint32_t));
+	if(len)
+		memcpy(&stringContents[prefix + sizeof(uint32_t)], data, len);
+	stringContents[prefix + sizeof(uint32_t) + len] = 0;
 
-	return address;
+	return prefix + sizeof(uint32_t);
 }
 
 int zCZodiacWriter::SaveTypeId(int typeId)
@@ -816,6 +850,37 @@ int zCZodiacWriter::SaveTypeId(int typeId)
 		}
 	}
 
+//Script-declared funcdefs live in the engine's internal funcDefs list but are
+//exposed by NEITHER engine->GetFuncdefByIndex (that lists only app-registered
+//funcdefs) NOR any module enumeration, so they never entered m_typeList. Give
+//them the same overflow slot templates use, keyed by name+module so the reader
+//can re-resolve them once the module's bytecode is loaded.
+	if(auto typeInfo = GetEngine()->GetTypeInfoById(typeId))
+	{
+		if(typeInfo->GetFuncdefSignature())
+		{
+			for(uint32_t i = 0; i < m_ttypeList.size(); ++i)
+			{
+				if(m_ttypeList[i] == typeId)
+					return m_typeList.size() + i;
+			}
+
+			auto _module = typeInfo->GetModule();
+			const char * declaration = GetEngine()->GetTypeDeclaration(typeId, true);
+
+			zCTemplate info;
+			info.name        = SaveString(typeInfo->GetName());
+			info.nameSpace   = SaveString(typeInfo->GetNamespace());
+			info.declaration = SaveString(declaration ? declaration : typeInfo->GetName());
+			info._module     = _module ? SaveString(_module->GetName()) : 0;
+
+			m_ttypeList.push_back(typeId);
+			m_templates.push_back(info);
+
+			return m_typeList.size() + m_ttypeList.size()-1;
+		}
+	}
+
 	throw Exception(zE_BadTypeId);
 	return -1;
 }
@@ -863,6 +928,11 @@ int zCZodiacWriter::SaveContext(asIScriptContext const* id)
 {
 	if(id == nullptr)
 		return 0;
+
+//A saved context references the bytecode of the functions on its call stack. If
+//bytecode is not being written the restored context would dangle, so refuse.
+	if(!SaveByteCode())
+		throw Exception(zE_CantSaveContextWithoutBytecode);
 
 	Node node;
 

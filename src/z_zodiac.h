@@ -3,6 +3,7 @@
 #ifdef HAVE_ZODIAC
 #include "zodiac.h"
 #include <atomic>
+#include <string>
 #include <vector>
 
 namespace Zodiac
@@ -32,7 +33,7 @@ struct TypeEntry;
 	void  SetReadSaveDataCallback(zREADER_FUNC_t cb)	 override { m_saveDataReadCallback = cb;  }
 	void  SetWriteSaveDataCallback(zWRITER_FUNC_t cb)	override { m_saveDataWriteCallback = cb;  }
 
-	void  SetPostRestoreCallback(zFUNCTION_t cb)		 override { m_postSavingCallback = cb;  }
+	void  SetPostRestoreCallback(zFUNCTION_t cb)		 override { m_postRestoreCallback = cb;  }
 	void  SetPostSavingCallback(zFUNCTION_t cb)			 override { m_postSavingCallback = cb;  }
 
 	void SetUserData(void * d) override { m_userData = d; };
@@ -69,6 +70,7 @@ private:
 	std::atomic<int>	m_progress{};
 	std::atomic<int>	m_totalSteps{};
 	std::atomic<bool>   m_inProgress{};
+	std::atomic<bool>   m_loaded{};
 
 	std::vector<TypeEntry> m_typeList;
 
@@ -81,7 +83,7 @@ private:
 	};
 
 	std::string error_string;
-	Code		error_code;
+	Code		error_code{zE_Success};
 };
 
 struct zCZodiac::TypeEntry

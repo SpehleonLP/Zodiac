@@ -7,6 +7,7 @@
 #include "zodiac.h"
 #include <memory>
 #include <atomic>
+#include <cstring>
 
 namespace Zodiac
 {
@@ -50,8 +51,51 @@ public:
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
 
 	void LoadScriptObject(void *, int address, int asTypeId, bool isWeak=false) override;
+private:
+	// The synchronous graph-node visit: ensure the object exists, register it in
+	// m_loadedObjects, resolve handles/aliases/owners, and store the pointer into
+	// dst. Its DEFERRABLE tail (restoring the object's own property contents) is
+	// pushed onto m_restoreWork instead of recursing, so chain depth is bounded by
+	// heap, not the C stack. The public LoadScriptObject wraps this and, only at the
+	// outermost call, drains m_restoreWork to completion.
+	void LoadScriptObjectImpl(void *, int address, int asTypeId, bool isWeak);
+	// Restores one already-registered script object's two property loops (the
+	// deferrable tail split out of LoadScriptObjectImpl).
+	void RestoreScriptObjectContents(void * dst, uint32_t address);
+public:
 
-	const char		*	LoadString(int id) const override { return  (uint32_t)id < stringTableLength()? &m_stringTable[id] : nullptr;  }
+	const char		*	LoadString(int id, uint32_t * outLen = nullptr) const override
+	{
+		if((uint32_t)id >= stringTableLength())
+		{
+			if(outLen) *outLen = 0;
+			return nullptr;
+		}
+
+		if(outLen)
+		{
+			const uint32_t avail = stringTableLength() - (uint32_t)id;
+			uint32_t len;
+			if((uint32_t)id >= sizeof(uint32_t))
+			{
+				// Length prefix sits immediately before the data (see the
+				// writer's InsertString). Read it unaligned-safe via memcpy.
+				memcpy(&len, m_stringTable + id - sizeof(uint32_t), sizeof(uint32_t));
+				// Never trust the stored length past the table end (corrupt
+				// input): clamp so a length-driven read can't over-run.
+				if(len > avail) len = (uint32_t)strnlen(&m_stringTable[id], avail);
+			}
+			else
+			{
+				// No room for a prefix (the empty-string sentinel at id 0, or a
+				// corrupt sub-prefix offset): fall back to a bounded strlen.
+				len = (uint32_t)strnlen(&m_stringTable[id], avail);
+			}
+			*outLen = len;
+		}
+
+		return &m_stringTable[id];
+	}
 	asITypeInfo		*	LoadTypeInfo(int id, bool RefCount) override;
 	int					LoadTypeId(int id) override;
 	asIScriptFunction * LoadFunction(int id) override;
@@ -63,6 +107,11 @@ public:
 
 private:
 friend class zCZodiac;
+	// true iff [offset, offset + count*elemSize) lies fully within [0, fileLen),
+	// with no arithmetic overflow. All inputs are widened to 64-bit; because every
+	// caller's offset/count come from 32-bit header fields and elemSize is a small
+	// sizeof, count*elemSize and offset+bytes can never overflow uint64_t.
+	static bool InFile(uint64_t offset, uint64_t count, uint64_t elemSize, uint64_t fileLen);
 	void ProcessModules(asIScriptEngine *, bool loadedByteCode);
 	void ReadSaveData(zREADER_FUNC_t, void *);
 	void DocumentGlobalVariables(asIScriptEngine *);
@@ -90,13 +139,11 @@ friend class zCZodiac;
 	zCMemoryMap	  m_mmap;
 
 	zCHeader	  const * m_header;
-//	uint32_t	  const * m_stringAddresses;
 	char		  const * m_stringTable;
 	zCModule	  const * m_modules;
 	zCEntry		  const * m_entries;
 	zCGlobalInfo  const * m_globals;
 	zCTypeInfo    const * m_typeInfo;
-//	zCFunction    const * m_functions;
 
 
 	struct Property
@@ -121,6 +168,15 @@ friend class zCZodiac;
 	std::vector<int>		m_asTypeIdFromStored;
 	std::unique_ptr<LoadedInfo[]>	m_loadedObjects;
 	std::unique_ptr<void*[]>	m_loadedFunctions;
+
+	// Explicit heap work-stack for the deferred object-contents restore. Each item
+	// is an already-created/registered script object plus its file address; draining
+	// it iteratively replaces the former per-node recursion (see LoadScriptObject).
+	struct RestoreWork { void * ptr; uint32_t address; };
+	std::vector<RestoreWork>	m_restoreWork;
+	// True while the outermost LoadScriptObject is draining m_restoreWork; keeps
+	// nested (re-entrant) LoadScriptObject calls from starting a second drain.
+	bool						m_draining = false;
 
 	std::atomic<int> & m_progress;
 	std::atomic<int> & m_totalSteps;

@@ -28,6 +28,8 @@ public:
 
 	uint SubFileOffset() const override;
 
+	int GetFileDescriptor() const override;
+
 
 protected:
 	zCFile(FILE*, bool owns);

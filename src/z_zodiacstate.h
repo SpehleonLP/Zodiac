@@ -6,6 +6,15 @@
 namespace Zodiac
 {
 
+// On-disk format version. Bump whenever the wire format changes in a way that
+// makes older images unreadable. Verify() rejects any image whose stored
+// writerVersionId != this value with zE_BadFileType. There is no on-disk
+// back-compat (no shipped saves), so a hard != reject is correct.
+//   v1 (2026-07-01): string table entries are length-prefixed (uint32 byte
+//                    count stored immediately before each string's data) so
+//                    strings with embedded NUL bytes round-trip.
+static constexpr uint zZODIAC_FORMAT_VERSION = 1;
+
 struct zCEntry
 {
 	uint typeId;
@@ -34,6 +43,14 @@ struct zCModule
 	uint beginGlobalInfo;
 	uint globalsLength;
 };
+
+// A funcdef-handle global's `address` indexes the FUNCTION table (SaveScriptObject
+// routes funcdefs to SaveFunction), not the object-address table. It is marked
+// with this sentinel top bit so Verify() can bound it against the right table and
+// the restore path can mask it back to a plain function index. Real function/
+// object indices are bounded by RAM and never approach 2^31, so the top bit is a
+// safe discriminator (asserted implicitly by the Verify range checks).
+static const uint zGLOBAL_FUNCTION_ADDRESS = 0x80000000u;
 
 struct zCGlobalInfo
 {
@@ -87,7 +104,7 @@ struct zCHeader
 	ubyte  isBigEndian{};
 	ubyte  pad11{};
 	uint asVersion{ANGELSCRIPT_VERSION};
-	uint writerVersionId{};
+	uint writerVersionId{zZODIAC_FORMAT_VERSION};
 
 	uint saveDataByteOffset{};
 	uint saveDataByteLength{};
