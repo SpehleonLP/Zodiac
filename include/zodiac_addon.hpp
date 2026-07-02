@@ -73,27 +73,42 @@ namespace Zodiac
 	{
 		assert(any != nullptr);
 
-		zAny value;
+		zAny value{};
 
 		int asTypeId = any->GetTypeId();
-		int rTypeId = asTypeId | ((asTypeId & asTYPEID_SCRIPTOBJECT)? asTYPEID_OBJHANDLE : 0);
-		value.typeId = asTypeId;
-		any->Retrieve(&value, rTypeId);
 
-		if(asTypeId > asTYPEID_DOUBLE)
+	// An empty any (nothing was store()d) reports typeId asTYPEID_VOID (0). Do NOT
+	// call Retrieve on it -- Retrieve asserts on typeId 0. Emit a typeId-0 sentinel
+	// record; the load side reconstructs an empty any. (SaveTypeId never yields 0
+	// for a real payload: primitives map to their own id >=1 and object payloads
+	// carry a non-zero table index / handle bit, so 0 unambiguously means "empty".)
+		if(asTypeId == AS_NAMESPACE_QUALIFIER asTYPEID_VOID)
 		{
-	// any stores object values as handles; Retrieve() AddRef'd the object into
-	// value.valueObj. Capture it BEFORE writing the object id, because the union
-	// (valueInt/valueObj) aliases -- assigning value.valueInt would clobber it.
-	// SaveScriptObject dereferences its arg for handle types (EnqueueNode reads
-	// *(void**)address), so it wants the ADDRESS of the handle slot.
-			void * obj = value.valueObj;
-			void * arg = (asTypeId & asTYPEID_OBJHANDLE) ? (void*)&obj : obj;
-			value.valueInt = writer->SaveScriptObject(arg, asTypeId, any);
+			value.typeId  = 0;
+			value.valueInt = 0;
+			writer->GetFile()->Write(&value);
+			return;
+		}
 
-	// Release the transient reference Retrieve() added.
-			if((asTypeId & asTYPEID_OBJHANDLE) && obj)
-				writer->GetEngine()->ReleaseScriptObject(obj, writer->GetEngine()->GetTypeInfoById(asTypeId));
+		if(asTypeId <= asTYPEID_DOUBLE)
+		{
+	// Primitive: GetObjectAddress() points at the 8-byte value union; copy the raw
+	// bits (the load side reconstructs them via Store(&valueInt, typeId)).
+			memcpy(&value.valueInt,
+			       const_cast<AS_NAMESPACE_QUALIFIER CScriptAny*>(any)->GetObjectAddress(),
+			       sizeof(value.valueInt));
+		}
+		else
+		{
+	// Object payload. GetObjectAddress() yields exactly what SaveScriptObject wants
+	// (mirrors the dictionary GetAddressOfValue() path): for a HANDLE it returns
+	// &valueObj (the handle slot, which EnqueueNode dereferences); for a VALUE-TYPE
+	// object (e.g. string) it returns valueObj (the object pointer itself). This
+	// fixes the value-type case: the old Retrieve(&value, ...) path did a full
+	// object copy of a >8-byte value type into the 8-byte union, smashing the stack
+	// and later handing SaveString a garbage pointer (the reported SEGV).
+			void * addr = const_cast<AS_NAMESPACE_QUALIFIER CScriptAny*>(any)->GetObjectAddress();
+			value.valueInt = writer->SaveScriptObject(addr, asTypeId, any);
 		}
 
 	// Translate the engine-local AS typeId into a stable stored typeId (mirrors the
@@ -110,9 +125,7 @@ namespace Zodiac
 		zAny value;
 		reader->GetFile()->Read(&value);
 
-	// Reverse the SaveTypeId translation applied on the save side.
 		int storedTypeId = value.typeId;
-		int asTypeId = reader->LoadTypeId(storedTypeId & asTYPEID_MASK_SEQNBR) | (storedTypeId & zTYPEID_OBJHANDLE);
 
 		// CScriptAny is a REF type: the handle path receives *any == null and must
 		// ALLOCATE a new object (refcount 1), mirroring array's `*array = Create()`.
@@ -120,12 +133,20 @@ namespace Zodiac
 		if(isHandle)
 			*any = new CScriptAny(reader->GetEngine());
 
+	// Empty-any sentinel (see save side): a freshly-constructed any already reports
+	// typeId 0, so leave it untouched -- do NOT call Store (Store asserts on 0).
+		if(storedTypeId == 0)
+			return;
+
+	// Reverse the SaveTypeId translation applied on the save side.
+		int asTypeId = reader->LoadTypeId(storedTypeId & asTYPEID_MASK_SEQNBR) | (storedTypeId & zTYPEID_OBJHANDLE);
+
 //is this okay? type punning is discouraged in C++11 for some reason??
 		if(asTypeId <= asTYPEID_DOUBLE)
 		{
 			(*any)->Store(&value.valueInt, asTypeId);
 		}
-		else
+		else if(asTypeId & asTYPEID_OBJHANDLE)
 		{
 	// LoadScriptObject writes the (AddRef'd) object into obj; StoreMove takes that
 	// reference (no extra AddRef), so the load-side ref balances the store.
@@ -137,6 +158,21 @@ namespace Zodiac
 			reader->LoadScriptObject(&obj, (int)value.valueInt, asTypeId);
 
 			(*any)->StoreMove(&obj, asTypeId, CScriptAny::isHandle);
+		}
+		else
+		{
+	// Value-type object payload (e.g. string). Reconstruct into engine-owned storage
+	// (LoadScriptObject fills the already-constructed object), then StoreMove by
+	// reference -- for a value type StoreMove does a CreateScriptObjectCopy, so it
+	// copies our transient object and we release ours afterwards. Mirrors the
+	// dictionary value-type load path.
+			auto engine   = reader->GetEngine();
+			auto typeInfo = engine->GetTypeInfoById(asTypeId);
+			void * obj    = engine->CreateScriptObject(typeInfo);
+			reader->LoadScriptObject(obj, (int)value.valueInt, asTypeId);
+
+			(*any)->StoreMove(obj, asTypeId, CScriptAny::isReference);
+			engine->ReleaseScriptObject(obj, typeInfo);
 		}
 	}
 #endif
