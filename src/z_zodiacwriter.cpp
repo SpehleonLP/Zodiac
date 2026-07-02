@@ -31,6 +31,14 @@ int zCZodiacWriter::EnqueueNode(Node node)
 			node.address = *(void const**)node.address;
 			node.asTypeId &= ~zTYPEID_OBJHANDLE;
 			node.owner = nullptr;
+
+	// A null handle to an app/template ref type (e.g. `array<int>@ p = null;`)
+	// has no object to enqueue. The scriptobject branch below maps a null address
+	// to asTYPEID_VOID, which matches the reserved null entry 0; app/template
+	// types skip that branch and would otherwise assign their real type to entry 0
+	// and trip zE_InconsistentObjectType. Return the null object id directly.
+			if(node.address == nullptr && !(node.asTypeId & asTYPEID_SCRIPTOBJECT))
+				return 0;
 		}
 
 		if(node.asTypeId & asTYPEID_SCRIPTOBJECT)

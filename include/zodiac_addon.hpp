@@ -9,7 +9,6 @@
 
 #if 1
 #include "add_on/scriptstdstring/scriptstdstring.h"
-#include "add_on/contextmgr/contextmgr.h"
 #include "add_on/scriptfile/scriptfile.h"
 #include "add_on/scriptany/scriptany.h"
 #include "add_on/scriptdictionary/scriptdictionary.h"
@@ -30,90 +29,9 @@ extern void PrintArray(FILE * file, int depth, void const* objPtr, int typeId);
 
 namespace Zodiac
 {
-#ifdef CONTEXTMGR_H
-	void ZodiacSaveContextManager(zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CContextMgr const* mgr, int&)
-	{
-		int64_t time{};
-		if(mgr->m_getTimeFunc)
-		{
-			time = (mgr->m_getTimeFunc)();
-		}
-
-		auto file = writer->GetFile();
-
-		uint32_t noThreads = mgr->m_threads.size();
-		uint32_t curThread = mgr->m_currentThread;
-
-		file->Write(&noThreads);
-		file->Write(&curThread);
-
-		for(auto p : mgr->m_threads)
-		{
-			int sleepUntil = std::max<int64_t>((int64_t)p->sleepUntil - time, 0);
-			uint32_t size = p->coRoutines.size();
-
-			file->Write(&sleepUntil);
-			file->Write(&p->currentCoRoutine);
-			file->Write(&size);
-
-			int id = writer->SaveContext(p->keepCtxAfterExecution);
-
-			file->Write(&id);
-
-			for(auto ctx : p->coRoutines)
-			{
-				id = writer->SaveContext(ctx);
-				file->Write(&id);
-			}
-		}
-	}
-
-	void ZodiacLoadContextManager(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CContextMgr* mgr, int&, bool)
-	{
-		uint32_t time{};
-		if(mgr->m_getTimeFunc)
-		{
-			time = (mgr->m_getTimeFunc)();
-		}
-
-		auto file = reader->GetFile();
-
-		uint32_t noThreads{};
-		uint32_t curThread{};
-
-		file->Read(&noThreads);
-		file->Read(&curThread);
-
-		mgr->m_currentThread = curThread;
-		mgr->m_threads.resize(noThreads, nullptr);
-
-		for(auto & p : mgr->m_threads)
-		{
-			p = new CContextMgr::SContextInfo();
-			int sleepUntil{};
-			uint32_t size{};
-			int thread_id{};
-
-			file->Read(&sleepUntil);
-			file->Read(&p->currentCoRoutine);
-			file->Read(&size);
-			file->Read(&thread_id);
-
-			p->sleepUntil = (int64_t)sleepUntil + time;
-			p->keepCtxAfterExecution = reader->LoadContext(thread_id);
-			p->coRoutines.resize(size, nullptr);
-
-			for(auto & ctx : p->coRoutines)
-			{
-				file->Read(&thread_id);
-				ctx = reader->LoadContext(thread_id);
-			}
-
-			if(p->keepCtxAfterExecution)
-				p->keepCtxAfterExecution->Release();
-		}
-	}
-#endif
+// NOTE: The CContextMgr save/load glue moved to include/zodiac_contextmgr.hpp
+// (compiled only under ZODIAC_HAVE_PATCHED_CONTEXTMGR). It reaches into
+// now-protected CContextMgr internals that the stock SDK does not expose.
 
 #ifdef SCRIPTFILE_H
 	inline void ZodiacSave(Zodiac::zIZodiacWriter *, CScriptFile const*, int&)
@@ -157,15 +75,30 @@ namespace Zodiac
 
 		zAny value;
 
-		value.typeId = any->GetTypeId();
-		int rTypeId = value.typeId | ((value.typeId & asTYPEID_SCRIPTOBJECT)? asTYPEID_OBJHANDLE : 0);
+		int asTypeId = any->GetTypeId();
+		int rTypeId = asTypeId | ((asTypeId & asTYPEID_SCRIPTOBJECT)? asTYPEID_OBJHANDLE : 0);
+		value.typeId = asTypeId;
 		any->Retrieve(&value, rTypeId);
 
-		if(value.typeId > asTYPEID_DOUBLE)
+		if(asTypeId > asTYPEID_DOUBLE)
 		{
-			value.valueInt =  writer->SaveScriptObject(value.valueObj, value.typeId, any);
+	// any stores object values as handles; Retrieve() AddRef'd the object into
+	// value.valueObj. Capture it BEFORE writing the object id, because the union
+	// (valueInt/valueObj) aliases -- assigning value.valueInt would clobber it.
+	// SaveScriptObject dereferences its arg for handle types (EnqueueNode reads
+	// *(void**)address), so it wants the ADDRESS of the handle slot.
+			void * obj = value.valueObj;
+			void * arg = (asTypeId & asTYPEID_OBJHANDLE) ? (void*)&obj : obj;
+			value.valueInt = writer->SaveScriptObject(arg, asTypeId, any);
+
+	// Release the transient reference Retrieve() added.
+			if((asTypeId & asTYPEID_OBJHANDLE) && obj)
+				writer->GetEngine()->ReleaseScriptObject(obj, writer->GetEngine()->GetTypeInfoById(asTypeId));
 		}
 
+	// Translate the engine-local AS typeId into a stable stored typeId (mirrors the
+	// dictionary value path); a raw AS typeId is meaningless in a reload engine.
+		value.typeId = writer->SaveTypeId(asTypeId) | (asTypeId & zTYPEID_OBJHANDLE);
 		writer->GetFile()->Write(&value);
 	}
 
@@ -177,19 +110,33 @@ namespace Zodiac
 		zAny value;
 		reader->GetFile()->Read(&value);
 
+	// Reverse the SaveTypeId translation applied on the save side.
+		int storedTypeId = value.typeId;
+		int asTypeId = reader->LoadTypeId(storedTypeId & asTYPEID_MASK_SEQNBR) | (storedTypeId & zTYPEID_OBJHANDLE);
+
+		// CScriptAny is a REF type: the handle path receives *any == null and must
+		// ALLOCATE a new object (refcount 1), mirroring array's `*array = Create()`.
+		// A placement-new into the null slot would dereference null and crash.
 		if(isHandle)
-			new(*any) CScriptAny(reader->GetEngine());
+			*any = new CScriptAny(reader->GetEngine());
 
 //is this okay? type punning is discouraged in C++11 for some reason??
-		if(value.typeId <= asTYPEID_DOUBLE)
+		if(asTypeId <= asTYPEID_DOUBLE)
 		{
-			(*any)->Store(&value.valueInt, value.typeId);
+			(*any)->Store(&value.valueInt, asTypeId);
 		}
 		else
 		{
-			reader->LoadScriptObject(&value.valueObj, value.valueInt, value.typeId);
+	// LoadScriptObject writes the (AddRef'd) object into obj; StoreMove takes that
+	// reference (no extra AddRef), so the load-side ref balances the store.
+	// MUST use isHandle: StoreMove treats the arg as `*(void**)ref` under isHandle
+	// (the object pointer we hold) but as the raw `ref` under isReference -- the
+	// latter would store &obj, a dangling stack address, which is what the original
+	// glue did and why any-of-handle crashed on read-back.
+			void * obj{};
+			reader->LoadScriptObject(&obj, (int)value.valueInt, asTypeId);
 
-			(*any)->StoreMove(&value.valueObj, value.typeId, CScriptAny::MovePointer::isReference);
+			(*any)->StoreMove(&obj, asTypeId, CScriptAny::isHandle);
 		}
 	}
 #endif
@@ -271,32 +218,48 @@ namespace Zodiac
 #endif
 
 #ifdef SCRIPTDICTIONARY_H
-//are these safe?? type punning is undefined behavior...
-	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictValue const* dict, int&)
+// The dictionary value is a tagged union: a primitive (punned into an int64),
+// a value-type object (stored as an object pointer), or an object handle. The
+// primitive path is written/read verbatim; object/handle values route through
+// SaveScriptObject/LoadScriptObject and are reconstructed via the PUBLIC
+// CScriptDictValue::Set (we never touch the now-protected m_typeId/m_valueObj).
+	inline void ZodiacSaveDictValue(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictValue const* dict, int typeId, const void * addressOfValue)
 	{
-		assert(dict != nullptr);
+		int64_t  value{};
 
-		int64_t  value;
-		int      typeId  = dict->GetTypeId();
-
-		if(typeId < asTYPEID_FLOAT)
+		if(typeId <= AS_NAMESPACE_QUALIFIER asTYPEID_DOUBLE)
 		{
-			dict->Get(writer->GetEngine(), value);
-		}
-		else if(typeId <= asTYPEID_DOUBLE)
-		{
-			double dbl;
-			dict->Get(writer->GetEngine(), dbl);
-			memcpy(&value, &dbl, sizeof(double));
+	// Primitive: the dictionary stores every primitive verbatim in its 8-byte
+	// value union (int64/double), and GetAddressOfValue() points at that union.
+	// Read the raw bits directly -- the previous dict->Get() path crashed when
+	// called from the dictionary iterator, which legitimately passes dict==null
+	// (only addressOfValue is available there). The load side reconstructs the
+	// same raw bits via CScriptDictValue(engine, &value, typeId), so this is
+	// symmetric. (void)dict silences the now-unused parameter.
+			(void)dict;
+			memcpy(&value, addressOfValue, sizeof(value));
 		}
 		else
 		{
-			value =  writer->SaveScriptObject(dict->GetAddressOfValue(), typeId, dict);
+	// GetAddressOfValue() already yields exactly what SaveScriptObject expects:
+	// for a HANDLE it returns &m_valueObj (the address of the handle slot, which
+	// SaveScriptObject/EnqueueNode dereference), and for a VALUE-TYPE object it
+	// returns m_valueObj (the object pointer itself). Pass it verbatim in both
+	// cases -- the old code dereferenced it for value types, reading the object's
+	// first word as a bogus pointer and crashing in the element's ZodiacSave.
+			void * objPtr = const_cast<void*>(addressOfValue);
+			value = writer->SaveScriptObject(objPtr, typeId, dict);
 		}
 
-		typeId = writer->SaveTypeId(typeId) | (typeId & zTYPEID_OBJHANDLE);
-		writer->GetFile()->Write(&typeId);
+		int wt = writer->SaveTypeId(typeId) | (typeId & zTYPEID_OBJHANDLE);
+		writer->GetFile()->Write(&wt);
 		writer->GetFile()->Write(&value);
+	}
+
+	inline void ZodiacSave(Zodiac::zIZodiacWriter * writer, AS_NAMESPACE_QUALIFIER CScriptDictValue const* dict, int&)
+	{
+		assert(dict != nullptr);
+		ZodiacSaveDictValue(writer, dict, dict->GetTypeId(), dict->GetAddressOfValue());
 	}
 
 	inline void ZodiacLoad(zIZodiacReader * reader, AS_NAMESPACE_QUALIFIER CScriptDictValue* dict, int&, bool)
@@ -308,21 +271,34 @@ namespace Zodiac
 
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&value);
-		typeId = reader->LoadTypeId(typeId & asTYPEID_MASK_SEQNBR) | (typeId & zTYPEID_OBJHANDLE);
+		typeId = reader->LoadTypeId(typeId & AS_NAMESPACE_QUALIFIER asTYPEID_MASK_SEQNBR) | (typeId & zTYPEID_OBJHANDLE);
 
-		dict->FreeValue(reader->GetEngine());
+		auto engine = reader->GetEngine();
+		dict->FreeValue(engine);
 
-		if(typeId <= asTYPEID_DOUBLE)
+		if(typeId <= AS_NAMESPACE_QUALIFIER asTYPEID_DOUBLE)
 		{
-			new(dict) CScriptDictValue(reader->GetEngine(), &value, typeId);
+			new(dict) CScriptDictValue(engine, &value, typeId);
+		}
+		else if(typeId & AS_NAMESPACE_QUALIFIER asTYPEID_OBJHANDLE)
+		{
+	// Load the handle into a transient slot; Set() dereferences it and takes its
+	// own reference, so we release the transient one afterwards.
+			void * obj{};
+			reader->LoadScriptObject(&obj, (int)value, typeId);
+			dict->Set(engine, &obj, typeId);
+			if(obj)
+				engine->ReleaseScriptObject(obj, engine->GetTypeInfoById(typeId));
 		}
 		else
 		{
-			void * dst{};
-			reader->LoadScriptObject(&dst, value, typeId);
-
-			dict->m_typeId = typeId;
-			dict->m_valueObj = dst;
+	// Value-type object: reconstruct into engine-owned storage, then let Set()
+	// copy it into the dictionary before we release our transient copy.
+			auto typeInfo = engine->GetTypeInfoById(typeId);
+			void * obj = engine->CreateScriptObject(typeInfo);
+			reader->LoadScriptObject(obj, (int)value, typeId);
+			dict->Set(engine, obj, typeId);
+			engine->ReleaseScriptObject(obj, typeInfo);
 		}
 	}
 
@@ -335,11 +311,12 @@ namespace Zodiac
 		uint32_t size = dict->GetSize();
 		file->Write(&size);
 
-		for(auto & itr : *dict)
+		int real_type;
+		for(auto itr = dict->begin(); itr != dict->end(); ++itr)
 		{
-			int real_type;
-			ZodiacSave(writer, &itr.GetKey(), real_type);
-			ZodiacSave(writer, &itr.GetValue(), real_type);
+			AS_NAMESPACE_QUALIFIER dictKey_t key = itr.GetKey();
+			ZodiacSave(writer, &key, real_type);
+			ZodiacSaveDictValue(writer, nullptr, itr.GetTypeId(), itr.GetAddressOfValue());
 		}
 	}
 
@@ -356,6 +333,7 @@ namespace Zodiac
 			(*dict)->DeleteAll();
 		}
 
+		auto engine = reader->GetEngine();
 		auto file = reader->GetFile();
 
 		uint32_t size;
@@ -363,15 +341,56 @@ namespace Zodiac
 
 		for(uint32_t i = 0; i < size; ++i)
 		{
-			std::string key;
-			CScriptDictValue value;
-
+			AS_NAMESPACE_QUALIFIER dictKey_t key;
 			int real_type;
 			ZodiacLoad(reader, &key, real_type, false);
-			ZodiacLoad(reader, &value, real_type, false);
 
-			(*dict)->Insert(std::move(key), std::move(value));
+	// Reconstruct the value in a scratch CScriptDictValue, then hand it to the
+	// public dictionary Set (which takes ownership via CScriptDictValue::Set).
+			AS_NAMESPACE_QUALIFIER CScriptDictValue scratch;
+			ZodiacLoad(reader, &scratch, real_type, false);
+
+			int typeId = scratch.GetTypeId();
+			if(typeId <= AS_NAMESPACE_QUALIFIER asTYPEID_DOUBLE)
+			{
+				if(typeId < AS_NAMESPACE_QUALIFIER asTYPEID_FLOAT)
+				{
+					asINT64 v{}; scratch.Get(engine, v);
+					(*dict)->Set(key, v);
+				}
+				else
+				{
+					double v{}; scratch.Get(engine, v);
+					(*dict)->Set(key, v);
+				}
+			}
+			else
+			{
+	// GetAddressOfValue() returns exactly what CScriptDictValue::Set expects: for a
+	// HANDLE it returns &m_valueObj and Set does `m_valueObj = *(void**)value`; for a
+	// VALUE-TYPE object it returns m_valueObj and Set copies via CreateScriptObjectCopy.
+	// Pass it verbatim in both cases (the old code dereferenced it for value types).
+				const void * addr = scratch.GetAddressOfValue();
+				void * setArg = const_cast<void*>(addr);
+				(*dict)->Set(key, setArg, typeId);
+			}
+
+			scratch.FreeValue(engine);
 		}
+	}
+
+// The dictionary add-on also registers a transient foreach-iterator ref type
+// (`dictionaryIter`). It is never stored in a module/global, but Zodiac requires
+// a save/load entry for every registered non-POD app type, so provide an
+// unserializable stub -- reaching it at save time means something is wrong.
+	inline void ZodiacSave(Zodiac::zIZodiacWriter *, AS_NAMESPACE_QUALIFIER CScriptDictionary::CScriptDictIter const*, int&)
+	{
+		throw zE_ObjectUnserializable;
+	}
+
+	inline void ZodiacLoad(zIZodiacReader *, AS_NAMESPACE_QUALIFIER CScriptDictionary::CScriptDictIter**, int&, bool)
+	{
+		throw zE_ObjectUnserializable;
 	}
 
 #endif
@@ -452,8 +471,11 @@ namespace Zodiac
 		int typeId      = writer->SaveTypeInfo(handle->GetType());
 		int objectId{};
 
+	// CScriptHandle::GetRef() is non-const upstream; the save signature must stay
+	// `CScriptHandle const*` to match the registered zSAVE_FUNC_t, so const_cast
+	// at this single call site (we do not mutate the handle).
 		if(handle->GetType())
-			objectId = writer->SaveScriptObject(handle->GetRef(), handle->GetType()->GetTypeId(), nullptr);
+			objectId = writer->SaveScriptObject(const_cast<AS_NAMESPACE_QUALIFIER CScriptHandle*>(handle)->GetRef(), handle->GetType()->GetTypeId(), nullptr);
 
 		file->Write(&typeId);
 		file->Write(&objectId);
@@ -476,11 +498,19 @@ namespace Zodiac
 
 		if(typeInfo)
 		{
-			assert(typeInfo == nullptr || typeInfo->GetTypeId() & asTYPEID_OBJHANDLE);
-			reader->LoadScriptObject(&obj, objectId, typeInfo->GetTypeId(), true);
+	// Mirror the (working) dictionary handle path exactly. typeInfo is the referenced
+	// OBJECT type (e.g. Node); load into a transient handle slot with the OBJHANDLE bit
+	// set. LoadScriptObject (isWeak=false) hands back a reference we own; Set() takes
+	// its OWN reference, so we release the transient one afterwards. The earlier
+	// isWeak=true / no-release variant left the handle referencing a dangling object.
+			int objTypeId = typeInfo->GetTypeId() | AS_NAMESPACE_QUALIFIER asTYPEID_OBJHANDLE;
+			reader->LoadScriptObject(&obj, objectId, objTypeId);
+			handle->Set(obj, typeInfo);
+			if(obj)
+				reader->GetEngine()->ReleaseScriptObject(obj, typeInfo);
 		}
-
-		handle->Set(obj, typeInfo);
+		else
+			handle->Set(nullptr, nullptr);
 	}
 #endif
 
@@ -501,7 +531,9 @@ namespace Zodiac
 		{
 			auto typeInfo = handle->GetRefType();
 
-			refTypeId = writer->SaveTypeInfo(handle->GetObjectType());
+	// GetObjectType() was removed upstream; GetRefType() is the type of the held
+	// reference and serves for both the weakref type and the referenced object.
+			refTypeId = writer->SaveTypeInfo(typeInfo);
 			typeId    = writer->SaveTypeInfo(typeInfo);
 			objectId  = writer->SaveScriptObject(object, typeInfo, nullptr);
 
@@ -525,16 +557,24 @@ namespace Zodiac
 		reader->GetFile()->Read(&typeId);
 		reader->GetFile()->Read(&objectId);
 
-		auto typeInfo = reader->LoadTypeInfo(typeId, false);
-		auto handleTypeInfo = reader->LoadTypeInfo(refTypeId, false);
+		(void)refTypeId;
+		auto subType = reader->LoadTypeInfo(typeId, false);
 
 		void * obj{};
-		reader->LoadScriptObject(&obj, objectId, typeInfo, true);
-
-		if(handleTypeInfo != nullptr)
+		if(subType && objectId)
 		{
-			*handle = CScriptWeakRef(obj, handleTypeInfo);
+	// Load the referenced object into a transient handle slot -- a STRONG reference
+	// we own for the moment. isWeak=false so LoadScriptObject hands us a real ref.
+			reader->LoadScriptObject(&obj, objectId, subType->GetTypeId() | AS_NAMESPACE_QUALIFIER asTYPEID_OBJHANDLE);
 		}
+
+	// `handle` is the in-place, engine-constructed weakref<T>: it already carries the
+	// correct TEMPLATE type (m_type == weakref<T>). Reuse it via Set(newRef). The old
+	// code reconstructed CScriptWeakRef(obj, GetRefType()), but GetRefType() is the
+	// SUBTYPE (T), not weakref<T>, so the ctor's "type must be weakref/const_weakref"
+	// assert fired. Set() also consumes the strong ref we just loaded and keeps only a
+	// weak one; a null obj (objectId 0, i.e. an already-expired weakref) restores null.
+		handle->Set(obj);
 	}
 #endif
 
@@ -553,6 +593,7 @@ namespace Zodiac
 #ifdef SCRIPTDICTIONARY_H
 		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptDictionary, "dictionary", nullptr);
 		zRegisterValueType(zodiac, AS_NAMESPACE_QUALIFIER CScriptDictValue, "dictionaryValue", nullptr);
+		zRegisterRefType(zodiac, AS_NAMESPACE_QUALIFIER CScriptDictionary::CScriptDictIter, "dictionaryIter", nullptr);
 #endif
 
 #ifdef SCRIPTFILE_H

@@ -307,9 +307,20 @@ void zCZodiacReader::Verify() const
 		if(entry.owner >= addressTableLength())
 			throw Exception("owner in entry", zE_BufferOverrun);
 
-		// typeId indexes m_typeInfo directly at restore time (reader.cpp:737,874)
-		if(entry.typeId >= typeInfoLength())
+		// entry.typeId is a STORED typeId: it indexes the zCTypeInfo table for
+		// script/registered types, but template-typed entries (array<T>, grid<T>,
+		// weakref<T>) and funcdef entries legitimately index the overflow region
+		// past typeInfoLength() (see typeTableLength() == typeInfo + templates, and
+		// the identical typeTableLength() bound used for functions at :198,:204).
+		if(entry.typeId >= typeTableLength())
 			throw Exception("typeId in entry", zE_BufferOverrun);
+
+		// Property records only exist for zCTypeInfo entries; template/funcdef
+		// overflow slots have none, and RestoreAppObject handles them without ever
+		// indexing m_typeInfo[typeId]. Only script/registered typeInfo entries run
+		// the per-property containment checks below.
+		if(entry.typeId >= typeInfoLength())
+			continue;
 
 		// Every property of this entry's type is read out of the entry payload.
 		// The restore loop reads an unconditional 4-byte handle slot at readOffset
@@ -831,6 +842,16 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 				RestoreFunction((void**)dst, address, ti);
 			return;
 		}
+	}
+
+//A null handle (object id 0) to an app/template ref type restores to null. The
+//scriptobject-handle path handles this later (via the loaded==null branch), but
+//app/template handles otherwise fall into RestoreAppObject -> RestoreFunction,
+//which asserts address != 0. Short-circuit all null handles uniformly here.
+	if(address == 0 && (asTypeId & asTYPEID_OBJHANDLE))
+	{
+		*(void**)dst = nullptr;
+		return;
 	}
 
 //object address 0 is nullptr so negative values aren't considered
