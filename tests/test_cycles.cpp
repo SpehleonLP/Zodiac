@@ -158,3 +158,60 @@ TEST(Cycles, DeepChain)
 	while(n && count < 60000) { n = ReadHandle(PropAddr(n, "next")); ++count; }
 	EXPECT_EQ(count, 50000) << "deep chain length not preserved";
 }
+
+// R2 regression stress: a 200,000-node handle chain. The pre-fix reader walked the
+// graph recursively (~2 C-stack frames per link), so this depth would overflow the
+// stack and abort under ASan. The fixed reader drives an explicit heap work-stack,
+// so depth is bounded by heap. We assert not just survival but that the chain is
+// intact end-to-end: values at the head, midpoint, and tail, plus the exact length.
+//
+// DISABLED by default: Zodiac's own save (linear, hash-map address index) and load
+// (linear, iterative work-stack) are both fast here -- measured ~1.25 us and ~0.8 us
+// per node. The multi-minute wall time is entirely AngelScript's garbage collector
+// tearing down the deep handle chain in ~TestEngine: AS's circular-ref detector runs
+// repeated O(n) passes over the chain, so teardown is O(n^2) in the AS library and
+// no Zodiac change can move it. DeepChain (50k) already guards the R2 overflow (it
+// exceeds the recursion-overflow depth by ~10x); this case adds no new Zodiac
+// coverage, only scale. Run on demand with --gtest_also_run_disabled_tests.
+TEST(Cycles, DISABLED_DeepChain200k)
+{
+	const int N = 200000;
+	const char * script =
+		"class Node { int value; Node@ next; }\n"
+		"Node@ head;\n"
+		"void setup() {\n"
+		"  Node@ prev = null;\n"
+		"  for(int i = 0; i < 200000; i++) {\n"
+		"    Node@ n = Node(); n.value = i; @n.next = prev; @prev = n; }\n"
+		"  @head = prev; }\n";
+
+	std::vector<char> image;
+	{ TestEngine e; image = Save(e.get(), script); }
+	ASSERT_FALSE(image.empty());
+
+	TestEngine e;
+	asIScriptObject * head = LoadHead(e.get(), image);
+	ASSERT_NE(head, nullptr);
+
+	// head was the LAST node built (prev), so head.value == N-1 and values count
+	// DOWN toward 0 at the tail. Sample head, midpoint, and tail as we walk.
+	EXPECT_EQ(NodeValue(head), N - 1) << "head value wrong";
+
+	asIScriptObject * n = head;
+	int count = 0;
+	int midValue = -2, tailValue = -2;
+	asIScriptObject * prev = nullptr;
+	while(n && count <= N + 10)
+	{
+		if(count == N / 2)   midValue  = NodeValue(n);
+		prev = n;
+		n = ReadHandle(PropAddr(n, "next"));
+		++count;
+	}
+	EXPECT_EQ(count, N) << "200k chain length not preserved";
+	EXPECT_EQ(midValue, (N - 1) - (N / 2)) << "midpoint value wrong";
+	ASSERT_NE(prev, nullptr);
+	tailValue = NodeValue(prev);
+	EXPECT_EQ(tailValue, 0) << "tail value wrong";
+	EXPECT_EQ(ReadHandle(PropAddr(prev, "next")), nullptr) << "tail must terminate in null";
+}

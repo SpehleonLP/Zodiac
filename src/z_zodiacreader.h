@@ -51,6 +51,18 @@ public:
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
 
 	void LoadScriptObject(void *, int address, int asTypeId, bool isWeak=false) override;
+private:
+	// The synchronous graph-node visit: ensure the object exists, register it in
+	// m_loadedObjects, resolve handles/aliases/owners, and store the pointer into
+	// dst. Its DEFERRABLE tail (restoring the object's own property contents) is
+	// pushed onto m_restoreWork instead of recursing, so chain depth is bounded by
+	// heap, not the C stack. The public LoadScriptObject wraps this and, only at the
+	// outermost call, drains m_restoreWork to completion.
+	void LoadScriptObjectImpl(void *, int address, int asTypeId, bool isWeak);
+	// Restores one already-registered script object's two property loops (the
+	// deferrable tail split out of LoadScriptObjectImpl).
+	void RestoreScriptObjectContents(void * dst, uint32_t address);
+public:
 
 	const char		*	LoadString(int id, uint32_t * outLen = nullptr) const override
 	{
@@ -156,6 +168,15 @@ friend class zCZodiac;
 	std::vector<int>		m_asTypeIdFromStored;
 	std::unique_ptr<LoadedInfo[]>	m_loadedObjects;
 	std::unique_ptr<void*[]>	m_loadedFunctions;
+
+	// Explicit heap work-stack for the deferred object-contents restore. Each item
+	// is an already-created/registered script object plus its file address; draining
+	// it iteratively replaces the former per-node recursion (see LoadScriptObject).
+	struct RestoreWork { void * ptr; uint32_t address; };
+	std::vector<RestoreWork>	m_restoreWork;
+	// True while the outermost LoadScriptObject is draining m_restoreWork; keeps
+	// nested (re-entrant) LoadScriptObject calls from starting a second drain.
+	bool						m_draining = false;
 
 	std::atomic<int> & m_progress;
 	std::atomic<int> & m_totalSteps;

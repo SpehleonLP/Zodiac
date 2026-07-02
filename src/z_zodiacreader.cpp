@@ -832,6 +832,40 @@ void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 
 void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, bool isWeak)
 {
+//The object-graph walk is iterative: LoadScriptObjectImpl does the synchronous
+//node visit (create/register/alias) and pushes each object's contents-restore onto
+//m_restoreWork instead of recursing. Only the OUTERMOST call drains the worklist,
+//so an arbitrarily deep handle chain is bounded by heap, not the C stack. Nested
+//(re-entrant) calls -- owner restoration, handle properties, addon onLoad glue --
+//see m_draining==true and merely enqueue, letting this loop drain them.
+	bool top = !m_draining;
+	m_draining = true;
+
+	LoadScriptObjectImpl(dst, address, asTypeId, isWeak);
+
+	if(top)
+	{
+		try
+		{
+			while(!m_restoreWork.empty())
+			{
+				RestoreWork item = m_restoreWork.back();
+				m_restoreWork.pop_back();
+				RestoreScriptObjectContents(item.ptr, item.address);
+			}
+		}
+		catch(...)
+		{
+			m_restoreWork.clear();
+			m_draining = false;
+			throw;
+		}
+		m_draining = false;
+	}
+}
+
+void zCZodiacReader::LoadScriptObjectImpl(void * dst, int address, int asTypeId, bool isWeak)
+{
 //Funcdef handles (member or global) are stored as FUNCTION-table indices, not
 //object-address indices, so they must be resolved through the function table and
 //never run the object-address machinery below (whose guard/entry lookups would
@@ -989,6 +1023,22 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 //---------------------------------------------------------
 // set up script object
 //---------------------------------------------------------
+//The object now exists and is registered in m_loadedObjects (above), which is what
+//breaks cycles: any back-edge reaching this address finds loaded.ptr set and aliases
+//it (the branch at the top) rather than descending again. Its own property contents
+//are DEFERRABLE -- enqueue them for the top-level drain instead of recursing, so a
+//deep chain does not grow the C stack. dst here points at the actual script object
+//(handles were dereferenced above).
+	m_restoreWork.push_back(RestoreWork{ dst, (uint32_t)address });
+}
+
+//Restore one already-registered script object's property contents. Split out of
+//LoadScriptObjectImpl's tail so it can be driven from the explicit work-stack; the
+//two loops are byte-for-byte the original inline logic.
+void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
+{
+	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
+
 	auto & zTypeInfo = m_typeInfo[m_entries[address].typeId];
 	asIScriptObject * ref = (asIScriptObject*)dst;
 
