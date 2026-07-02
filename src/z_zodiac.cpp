@@ -84,6 +84,16 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 
 Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 {
+//A zodiac restores exactly one image; a second load would leak the first load's
+//objects and populate an engine that is no longer a clean target. Reject before
+//allocating anything.
+	if(m_loaded.load())
+	{
+		error_string = Exception::ToString(zE_DoubleLoad);
+		error_code   = zE_DoubleLoad;
+		return zE_DoubleLoad;
+	}
+
 	if(m_inProgress.exchange(true))
 	{
 		error_string = Exception::ToString(zE_AlreadySaving);
@@ -137,6 +147,9 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	{
 		(m_postRestoreCallback)(m_userData);
 	}
+
+	if(error_code == zE_Success)
+		m_loaded = true;
 
 	return error_code;
 }

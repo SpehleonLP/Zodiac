@@ -70,6 +70,7 @@ private:
 	std::atomic<int>	m_progress{};
 	std::atomic<int>	m_totalSteps{};
 	std::atomic<bool>   m_inProgress{};
+	std::atomic<bool>   m_loaded{};
 
 	std::vector<TypeEntry> m_typeList;
 

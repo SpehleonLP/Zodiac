@@ -767,7 +767,7 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 
 		m_loadedObjects[address].beingLoaded = false;
 		assert(m_loadedObjects[address].zTypeId  == entry->zTypeId);
-		assert(m_loadedObjects[address].asTypeId = stored_id);
+		assert(m_loadedObjects[address].asTypeId == stored_id);
 	}
 
 	return true;
@@ -919,6 +919,13 @@ void zCZodiacReader::LoadScriptObject(void * dst, int address, int asTypeId, boo
 
 	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
 
+//an enum value is just its underlying integer, stored inline like a primitive
+	if(auto enumType = GetEngine()->GetTypeInfoById(asTypeId); enumType && (enumType->GetFlags() & asOBJ_ENUM))
+	{
+		memcpy(dst, src, enumType->GetSize());
+		return;
+	}
+
 	if(RestoreAppObject(dst, address, asTypeId))
 		return;
 	else if(asTypeId <= asTYPEID_DOUBLE && m_entries[address].typeId <= asTYPEID_DOUBLE)
@@ -1049,6 +1056,13 @@ void zCZodiacReader::RestoreScriptObject(void * dst, void const* src, uint asTyp
 	else
 	{
 		auto typeInfo = GetEngine()->GetTypeInfoById(asTypeId);
+
+//an enum value is just its underlying integer, stored inline like a primitive
+		if(typeInfo && (typeInfo->GetFlags() & asOBJ_ENUM))
+		{
+			memcpy(dst, src, typeInfo->GetSize());
+			return;
+		}
 
 //funcdef, next thing is an address
 		if(typeInfo && typeInfo->GetFuncdefSignature())

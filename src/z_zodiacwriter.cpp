@@ -201,9 +201,16 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 				}
 			}
 
+			asITypeInfo * childType = (childId > asTYPEID_DOUBLE) ? GetEngine()->GetTypeInfoById(childId) : nullptr;
+
 			if(childId <= asTYPEID_DOUBLE)
 			{
 				m_file->Write(address,  GetEngine()->GetSizeOfPrimitiveType(childId));
+			}
+			else if(childType && (childType->GetFlags() & asOBJ_ENUM))
+			{
+//an enum value is just its underlying integer, stored inline like a primitive
+				m_file->Write(address, childType->GetSize());
 			}
 			else if(childId & asTYPEID_SCRIPTOBJECT)
 			{
@@ -254,6 +261,11 @@ void zCZodiacWriter::WriteScriptObject(void const* ref, int asTypeId)
 	{
 		int size = GetEngine()->GetSizeOfPrimitiveType(asTypeId);
 		m_file->Write(ref, size);
+	}
+	else if(auto enumType = GetEngine()->GetTypeInfoById(asTypeId); enumType && (enumType->GetFlags() & asOBJ_ENUM))
+	{
+//an enum value is just its underlying integer, stored inline like a primitive
+		m_file->Write(ref, enumType->GetSize());
 	}
 	else
 	{
@@ -429,11 +441,12 @@ void zCZodiacWriter::WriteProperties()
 uint32_t zCZodiacWriter::CountTypes(asIScriptEngine * engine)
 {
 	auto N = engine->GetModuleCount();
-	uint32_t total =  engine->GetObjectTypeCount() + engine->GetFuncdefCount();
+	uint32_t total =  engine->GetObjectTypeCount() + engine->GetFuncdefCount() + engine->GetEnumCount();
 
 	for(uint32_t i = 0; i < N; ++i)
 	{
-		total += engine->GetModuleByIndex(i)->GetObjectTypeCount();
+		auto mod = engine->GetModuleByIndex(i);
+		total += mod->GetObjectTypeCount() + mod->GetEnumCount();
 	}
 
 	return total;
@@ -451,6 +464,11 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 		m_typeList.push_back(engine->GetObjectTypeByIndex(i)->GetTypeId());
 	}
 
+	for(uint32_t i = 0; i < engine->GetEnumCount(); ++i)
+	{
+		m_typeList.push_back(engine->GetEnumByIndex(i)->GetTypeId());
+	}
+
 	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
 	{
 		m_typeList.push_back(engine->GetFuncdefByIndex(i)->GetTypeId());
@@ -463,6 +481,11 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
 			m_typeList.push_back(mod->GetObjectTypeByIndex(j)->GetTypeId());
+		}
+
+		for(uint32_t j = 0; j < mod->GetEnumCount(); ++j)
+		{
+			m_typeList.push_back(mod->GetEnumByIndex(j)->GetTypeId());
 		}
 	}
 
@@ -502,6 +525,11 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 		buffer.push_back(WriteTypeInfo(engine, nullptr, typeInfo, false));
 	}
 
+	for(uint32_t i = 0; i < engine->GetEnumCount(); ++i)
+	{
+		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetEnumByIndex(i), false));
+	}
+
 	for(uint32_t i = 0; i < engine->GetFuncdefCount(); ++i)
 	{
 		buffer.push_back(WriteTypeInfo(engine, nullptr, engine->GetFuncdefByIndex(i), false));
@@ -518,6 +546,11 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
 			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
+		}
+
+		for(uint32_t j = 0; j < mod->GetEnumCount(); ++j)
+		{
+			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetEnumByIndex(j), false));
 		}
 
 		modules[i].typeInfoLength = buffer.size();
@@ -582,10 +615,10 @@ uint32_t zCZodiacWriter::GetByteLengthOfType(asIScriptEngine * engine, asIScript
 
 	asITypeInfo *type = engine->GetTypeInfoById(typeId);
 
-	if(type && (type->GetFlags() & asOBJ_POD) )
+	if(type)
 		return type->GetSize();
 
-//what to do??
+//unknown / unregistered type id
 	return 0;
 }
 
@@ -910,6 +943,11 @@ int zCZodiacWriter::SaveContext(asIScriptContext const* id)
 {
 	if(id == nullptr)
 		return 0;
+
+//A saved context references the bytecode of the functions on its call stack. If
+//bytecode is not being written the restored context would dangle, so refuse.
+	if(!SaveByteCode())
+		throw Exception(zE_CantSaveContextWithoutBytecode);
 
 	Node node;
 
