@@ -17,7 +17,7 @@ class zCZodiacWriter : public zIZodiacWriter
 public:
 	static uint32_t CountTypes(asIScriptEngine * engine);
 
-	zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps);
+	zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps, std::string saveScope = {});
 	virtual ~zCZodiacWriter() = default;
 
 	void SaveModules(asIScriptEngine * _module, bool saveByteCode, bool stripDebugInfo);
@@ -99,6 +99,14 @@ private:
 	std::vector<char>     stringContents{0};
 
 	std::vector<Node>	  m_stack;
+
+	// Empty = whole-engine save (every writer loop enumerates the full engine,
+	// as before). Non-empty = restrict the save to the one named module.
+	std::string                    m_saveScope;
+	// Modules in scope, in save order. Built once at the top of SaveModules;
+	// every per-module writer loop iterates THIS instead of the engine's module
+	// list so the parallel `modules` record array stays index-consistent.
+	std::vector<asIScriptModule*>  m_moduleList;
 
 
 	std::atomic<int> & m_progress;

@@ -10,9 +10,10 @@
 namespace Zodiac
 {
 
-zCZodiacWriter::zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps) :
+zCZodiacWriter::zCZodiacWriter(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & totalSteps, std::string saveScope) :
 	m_parent(parent),
 	m_file(file),
+	m_saveScope(std::move(saveScope)),
 	m_progress(progress),
 	m_totalSteps(totalSteps)
 {
@@ -384,13 +385,25 @@ void zCZodiacWriter::WriteObject(Node & n, uint32_t & offset, uint32_t & byteLen
 
 void zCZodiacWriter::SaveModules(asIScriptEngine * engine, bool saveByteCode, bool stripDebugInfo)
 {
-	std::vector<zCModule> modules(engine->GetModuleCount()+1);
-	memset(&modules.back(), 0, sizeof(modules[0]));
-
+	// Build the scope-filtered module list once; every per-module loop below
+	// iterates it (via m_moduleList) so the parallel `modules` record array
+	// stays index-consistent. Empty scope = all modules = today's behavior.
+	m_moduleList.clear();
 	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
 	{
-		auto _module = engine->GetModuleByIndex(i);
-		modules[i].name = SaveString(_module->GetName());
+		auto * mod = engine->GetModuleByIndex(i);
+		if(m_saveScope.empty() || m_saveScope == mod->GetName())
+			m_moduleList.push_back(mod);
+	}
+	if(!m_saveScope.empty() && m_moduleList.empty())
+		throw Exception(zE_ModuleDoesNotExist);
+
+	std::vector<zCModule> modules(m_moduleList.size()+1);
+	memset(&modules.back(), 0, sizeof(modules[0]));
+
+	for(uint32_t i = 0; i < m_moduleList.size(); ++i)
+	{
+		modules[i].name = SaveString(m_moduleList[i]->GetName());
 	}
 
 	WriteByteCode(engine, modules, saveByteCode, stripDebugInfo);
@@ -452,9 +465,9 @@ void zCZodiacWriter::WriteTypeInfo(asIScriptEngine * engine, std::vector<zCModul
 		m_typeList.push_back(engine->GetFuncdefByIndex(i)->GetTypeId());
 	}
 
-	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
+	for(uint32_t i = 0; i < m_moduleList.size(); ++i)
 	{
-		auto mod = engine->GetModuleByIndex(i);
+		auto mod = m_moduleList[i];
 
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
@@ -515,11 +528,11 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 
 	modules.back().typeInfoLength = buffer.size();
 
-	for(uint32_t i = 0; i < engine->GetModuleCount(); ++i)
+	for(uint32_t i = 0; i < m_moduleList.size(); ++i)
 	{
 		modules[i].beginTypeInfo = buffer.size();
 
-		auto mod = engine->GetModuleByIndex(i);
+		auto mod = m_moduleList[i];
 
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
@@ -604,13 +617,13 @@ void zCZodiacWriter::WriteByteCode(asIScriptEngine * engine, std::vector<zCModul
 {
 	m_header.byteCodeOffset = m_file->tell();
 
-	for(uint32_t i = 0; i <  engine->GetModuleCount(); ++i)
+	for(uint32_t i = 0; i <  m_moduleList.size(); ++i)
 	{
 		modules[i].byteCodeOffset = m_file->tell();
 
 		if(saveByteCode)
 		{
-			engine->GetModuleByIndex(i)->SaveByteCode(m_file, stripDebugInfo);
+			m_moduleList[i]->SaveByteCode(m_file, stripDebugInfo);
 		}
 
 		modules[i].byteCodeLength = m_file->tell() - modules[i].byteCodeOffset;
@@ -643,11 +656,11 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 		return address;
 	};
 
-	for(uint32_t i = 0; i <  engine->GetModuleCount(); ++i)
+	for(uint32_t i = 0; i <  m_moduleList.size(); ++i)
 	{
 		modules[i].beginGlobalInfo = m_file->tell();
 
-		auto mod = engine->GetModuleByIndex(i);
+		auto mod = m_moduleList[i];
 
 		for(uint32_t j = 0; j < mod->GetGlobalVarCount(); ++j)
 		{
@@ -666,18 +679,24 @@ void zCZodiacWriter::WriteGlobalVariables(asIScriptEngine * engine, std::vector<
 
 	modules.back().beginGlobalInfo = m_file->tell();
 
-	for(uint32_t i = 0; i < engine->GetGlobalPropertyCount(); ++i)
+	// Engine-level global properties are NOT part of any one module's state, so a
+	// scoped save skips them (the sentinel module's globalsLength stays 0). Whole-
+	// engine save (empty scope) enumerates them exactly as before.
+	if(m_saveScope.empty())
 	{
-		void * address;
-		engine->GetGlobalPropertyByIndex(i, &name, &nameSpace, &typeId, &isConst, nullptr, &address);
+		for(uint32_t i = 0; i < engine->GetGlobalPropertyCount(); ++i)
+		{
+			void * address;
+			engine->GetGlobalPropertyByIndex(i, &name, &nameSpace, &typeId, &isConst, nullptr, &address);
 
-		zCGlobalInfo buffer;
-		buffer.name = SaveString(name);
-		buffer.nameSpace = SaveString(nameSpace);
-		buffer.typeId   = typeId;
-		buffer.address = markAddress(SaveScriptObject(address, typeId, nullptr), typeId);
+			zCGlobalInfo buffer;
+			buffer.name = SaveString(name);
+			buffer.nameSpace = SaveString(nameSpace);
+			buffer.typeId   = typeId;
+			buffer.address = markAddress(SaveScriptObject(address, typeId, nullptr), typeId);
 
-		m_file->Write(&buffer);
+			m_file->Write(&buffer);
+		}
 	}
 
 	modules.back().globalsLength = (m_file->tell() - modules.back().beginGlobalInfo) / sizeof(zCGlobalInfo);

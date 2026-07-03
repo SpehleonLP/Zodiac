@@ -122,6 +122,14 @@ public:
 	virtual void    SetProperty(zZodiacProp property, bool value) = 0;
 	virtual bool    GetProperty(zZodiacProp property) const = 0;
 
+	// nullptr (default) = whole-engine save (existing behavior; every existing
+	// test round-trips unchanged). When set, SaveToFile writes ONLY the named
+	// module: its bytecode (if zZP_SAVE_BYTECODE), its types, its globals, and
+	// the object graph reachable from them. Engine-level global properties are
+	// skipped. References that leave the scope serialize through registered
+	// type entries (handle values), never as object state.
+	virtual void SetSaveScope(const char * moduleName) = 0;
+
 // progress / total steps for progress bar.
 	virtual Code    SaveToFile(zIFileDescriptor *) = 0;
 	virtual Code    LoadFromFile(zIFileDescriptor *) = 0;

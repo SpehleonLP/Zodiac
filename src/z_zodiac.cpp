@@ -41,7 +41,7 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 
 		SortTypeList();
 
-		zCZodiacWriter writer(this, file, m_progress, m_totalSteps);
+		zCZodiacWriter writer(this, file, m_progress, m_totalSteps, m_saveScope);
 
 		if(m_preSavingCallback)
 		{
@@ -210,6 +210,11 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 		m_loaded = true;
 
 	return error_code;
+}
+
+void zCZodiac::SetSaveScope(const char * moduleName)
+{
+	m_saveScope = moduleName ? moduleName : "";
 }
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace, bool isValueType)

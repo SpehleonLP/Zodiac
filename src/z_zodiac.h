@@ -24,6 +24,8 @@ struct TypeEntry;
 	void    SetProperty(zZodiacProp property, bool value) override { if(value) m_options |= (1 << property); else m_options &= ~(1 << property); }
 	bool    GetProperty(zZodiacProp property) const override { return m_options & (1 << property); }
 
+	void    SetSaveScope(const char * moduleName) override;
+
 	Code    SaveToFile(zIFileDescriptor *)	 override;
 	Code	LoadFromFile(zIFileDescriptor *) override;
 
@@ -73,6 +75,10 @@ private:
 	std::atomic<bool>   m_loaded{};
 
 	std::vector<TypeEntry> m_typeList;
+
+	// Empty = whole-engine save. Non-empty = restrict SaveToFile to the named
+	// module (see zIZodiac::SetSaveScope).
+	std::string m_saveScope;
 
 //the beauty of these things is that they avoid clunky try/catch statements
 	struct ClearBoolOnDestruct
