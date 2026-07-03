@@ -31,9 +31,15 @@ public:
 	// exactly at a chosen load phase, e.g. right before LoadContext).
 	uint32_t bytesRead() const { return m_read; }
 
+	// seek()/tell() throw zE_IOError (mirrors a non-seekable/broken descriptor).
+	void failSeek() { m_failSeek = true; }
+
 	int  Write(const void * ptr, Zodiac::uint size) override;
 	bool Flush() override;
 	int  Read(void * ptr, Zodiac::uint size) override;
+
+	void         seek(int offset, Zodiac::Flags flags) override;
+	Zodiac::uint tell() const override;
 
 private:
 	uint32_t m_written{0};
@@ -43,6 +49,7 @@ private:
 	uint32_t m_read{0};
 	uint32_t m_readCap{0};
 	bool     m_readCapActive{false};
+	bool     m_failSeek{false};
 };
 
 }

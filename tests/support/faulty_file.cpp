@@ -40,4 +40,16 @@ int zCFaultyFile::Read(void * ptr, uint size)
 	return r;
 }
 
+void zCFaultyFile::seek(int offset, Zodiac::Flags flags)
+{
+	if(m_failSeek) throw Zodiac::Exception(Zodiac::zE_IOError);
+	zCMemoryFile::seek(offset, flags);
+}
+
+Zodiac::uint zCFaultyFile::tell() const
+{
+	if(m_failSeek) throw Zodiac::Exception(Zodiac::zE_IOError);
+	return zCMemoryFile::tell();
+}
+
 }
