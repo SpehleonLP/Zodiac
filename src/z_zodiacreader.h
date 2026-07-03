@@ -10,6 +10,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <unordered_map>
 
 namespace Zodiac
 {
@@ -53,6 +54,7 @@ public:
 	inline uint32_t functionTableLength()	const { return m_header->functionTableLength; }
 	inline uint32_t templatesLength()		const { return m_header->templatesLength; }
 	inline uint32_t typeTableLength()		const { return templatesLength()+typeInfoLength(); }
+	inline uint32_t prototypeTableLength()	const { return m_header->prototypeTableLength; }
 
 	inline uint32_t		 const * GetStringAddresses() const { return (uint32_t const*)(m_mmap.GetAddress() + m_header->stringAddressOffset); }
 	inline char			 const * GetStringTable() const { return (char const *)(m_mmap.GetAddress() + m_header->stringTableOffset); }
@@ -62,6 +64,15 @@ public:
 	inline zCTypeInfo    const * GetTypeInfo() const { return (zCTypeInfo const*)(m_mmap.GetAddress() + m_header->typeInfoOffset); }
 	inline zCFunction    const * GetFunctions()  const { return (zCFunction const*)(m_mmap.GetAddress() + m_header->functionTableOffset); }
 	inline zCTemplate    const * GetTemplates()  const { return (zCTemplate const*)(m_mmap.GetAddress() + m_header->templatesOffset); }
+	inline zCPrototype   const * GetPrototypes() const { return (zCPrototype const*)(m_mmap.GetAddress() + m_header->prototypeTableOffset); }
+
+	// Task 4 merge seam. For a saved zCTypeInfo index, yields the OLD default
+	// payload bytes recorded in the prototype table AND a freshly built (memoized)
+	// NEW prototype for the live type. Returns false — no merge for this type — when
+	// either side is unavailable (no record, no provider, or the new type/instance
+	// cannot be built). The OLD payload is read straight from the saved-object
+	// region; no object is constructed for it.
+	bool GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, asIScriptObject ** newProto);
 
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
@@ -170,6 +181,14 @@ friend class zCZodiac;
 	zCEntry		  const * m_entries;
 	zCGlobalInfo  const * m_globals;
 	zCTypeInfo    const * m_typeInfo;
+
+	// Prototype records copied out of the file after Verify() proved them in-range
+	// (empty when the image carries no prototype table). m_newProtos memoizes the
+	// per-type NEW prototype the provider builds on demand (keyed by saved typeInfo
+	// index); Zodiac does not own those objects (the provider does). Both are
+	// consumed by GetPrototypeFor for the Task 4 merge.
+	std::vector<zCPrototype>                    m_prototypes;
+	std::unordered_map<int, asIScriptObject*>   m_newProtos;
 
 
 	struct Property

@@ -90,6 +90,18 @@ typedef void (*zFUNCTION_t)(void*);
 typedef void (*zREADER_FUNC_t)(zIZodiacReader *, void*);
 typedef void (*zWRITER_FUNC_t)(zIZodiacWriter *, void*);
 
+// Prototype provider (Arc-1 hot reload, parent Task 3). A "prototype" is the
+// default-constructed field layout of a script class. On SAVE, this is called
+// once per in-scope script-object type with that type's OLD asITypeInfo; the
+// returned instance's property payload is embedded in the file (return null =
+// no prototype for that type). On LOAD, it is called per restored script-object
+// type with the NEW asITypeInfo and the result is memoized. Zodiac never AddRefs
+// or Releases the returned object: the provider OWNS prototype lifetime and must
+// keep every returned instance alive until Save/LoadFromFile returns. Unset
+// (default) = no prototype table is written and load does no prototype work, so
+// behavior is byte-for-byte identical to before this feature.
+typedef asIScriptObject * (*zPROTO_FUNC_t)(void * userData, asITypeInfo * type);
+
 void ZodiacLoad(zIZodiacReader *, std::nullptr_t*, int &);
 void ZodiacSave(zIZodiacWriter *, std::nullptr_t*, int &);
 
@@ -138,6 +150,11 @@ public:
 	// resolves modules asGM_ONLY_IF_EXISTS and fails with zE_ModuleDoesNotExist
 	// if the (remapped) target module is absent from the live engine.
 	virtual void SetModuleRemap(const char * savedName, const char * liveName) = 0;
+
+	// Installs the prototype provider used to embed per-type default layouts on
+	// save and (Task 4) merge them on load. See zPROTO_FUNC_t. Unset = the file
+	// carries no prototype table and existing behavior is unchanged.
+	virtual void SetPrototypeProvider(zPROTO_FUNC_t) = 0;
 
 // progress / total steps for progress bar.
 	virtual Code    SaveToFile(zIFileDescriptor *) = 0;

@@ -73,6 +73,48 @@ zCHeader * HeaderOf(std::vector<char> & image)
 	return reinterpret_cast<zCHeader *>(image.data() + image.size() - sizeof(zCHeader));
 }
 
+// Prototype provider: default-construct via the type's factory. Owns lifetime.
+asIScriptObject * MakeProto(void * userData, asITypeInfo * type)
+{
+	auto * v = (std::vector<asIScriptObject*>*)userData;
+	auto * o = (asIScriptObject*)type->GetEngine()->CreateScriptObject(type);
+	v->push_back(o);
+	return o;
+}
+
+// Same Node graph, saved WITH a prototype provider so the image carries a
+// non-empty prototype table (one record for class Node) to corrupt.
+std::vector<char> BuildImageWithPrototype()
+{
+	TestEngine engine;
+	asIScriptModule * mod = engine->GetModule("m", asGM_ALWAYS_CREATE);
+	EXPECT_NE(mod, nullptr);
+	EXPECT_GE(mod->AddScriptSection("m", kScript), 0);
+	EXPECT_GE(mod->Build(), 0);
+
+	asIScriptFunction * setup = mod->GetFunctionByDecl("void setup()");
+	EXPECT_NE(setup, nullptr);
+	asIScriptContext * ctx = engine->CreateContext();
+	EXPECT_GE(ctx->Prepare(setup), 0);
+	EXPECT_EQ(ctx->Execute(), asEXECUTION_FINISHED);
+	ctx->Release();
+
+	std::vector<asIScriptObject*> protos;
+	std::vector<char> bytes;
+	{
+		auto zodiac = zCreateZodiac(engine.get());
+		RegisterZodiacAddons(zodiac.get());
+		zodiac->SetProperty(zZP_SAVE_BYTECODE, true);
+		zodiac->SetUserData(&protos);
+		zodiac->SetPrototypeProvider(&MakeProto);
+		zCMemoryFile file;
+		EXPECT_EQ(zodiac->SaveToFile(&file), zE_Success) << zodiac->GetErrorString();
+		bytes = file.bytes();
+	}
+	for(auto * p : protos) if(p) p->Release();
+	return bytes;
+}
+
 // Feed a (corrupted) image to a fresh engine, expect the given rejection Code and
 // no engine mutation.
 void ExpectRejected(std::vector<char> image, Code expected)
@@ -230,5 +272,64 @@ TEST(MalformedInput, GlobalFunctionAddressOutOfRange)
 	ASSERT_GT(h->globalsLength, 0u);
 	zCGlobalInfo * globals = reinterpret_cast<zCGlobalInfo *>(image.data() + h->globalsOffset);
 	globals[0].address = zGLOBAL_FUNCTION_ADDRESS | (h->functionTableLength + 1000);
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}
+
+// Sanity: an image WITH a prototype table (unchanged) really loads, so the
+// prototype cases below reject for the right reason (not a false green).
+TEST(MalformedInput, PrototypeImageLoads)
+{
+	std::vector<char> image = BuildImageWithPrototype();
+	ASSERT_FALSE(image.empty());
+	ASSERT_GT(HeaderOf(image)->prototypeTableLength, 0u);
+
+	TestEngine engine;
+	auto zodiac = MakeZodiac(engine.get());
+	zCMemoryFile file(image);
+	EXPECT_EQ(zodiac->LoadFromFile(&file), zE_Success)
+		<< "baseline prototype image should load: " << zodiac->GetErrorString();
+	EXPECT_NE(engine->GetModule("m", asGM_ONLY_IF_EXISTS), nullptr);
+}
+
+// Task 3 — a prototype record whose payload address is past the object-address
+// table. Must be rejected before Task 4's merge dereferences the entry.
+TEST(MalformedInput, PrototypeAddressOutOfRange)
+{
+	std::vector<char> image = BuildImageWithPrototype();
+	zCHeader * h = HeaderOf(image);
+	ASSERT_GT(h->prototypeTableLength, 0u);
+	zCPrototype * protos = reinterpret_cast<zCPrototype *>(image.data() + h->prototypeTableOffset);
+	protos[0].address = h->addressTableLength + 1000; // object-address-table bound
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}
+
+// Task 3 — a prototype record whose typeId indexes past the saved typeInfo table.
+TEST(MalformedInput, PrototypeTypeIdOutOfRange)
+{
+	std::vector<char> image = BuildImageWithPrototype();
+	zCHeader * h = HeaderOf(image);
+	ASSERT_GT(h->prototypeTableLength, 0u);
+	zCPrototype * protos = reinterpret_cast<zCPrototype *>(image.data() + h->prototypeTableOffset);
+	protos[0].typeId = h->typeInfoLength + 1000; // type-info-table bound
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}
+
+// Task 3 — the prototype table start offset is past EOF (truncated / lying table).
+TEST(MalformedInput, PrototypeTableOffsetPastEnd)
+{
+	std::vector<char> image = BuildImageWithPrototype();
+	zCHeader * h = HeaderOf(image);
+	ASSERT_GT(h->prototypeTableLength, 0u);
+	h->prototypeTableOffset = (uint32_t)image.size() + 4096;
+	ExpectRejected(std::move(image), zE_BufferOverrun);
+}
+
+// Task 3 — a prototype count larger than the file (offset+count*size overflows /
+// runs past EOF); the overflow-safe InFile check must reject it.
+TEST(MalformedInput, PrototypeCountPastEnd)
+{
+	std::vector<char> image = BuildImageWithPrototype();
+	zCHeader * h = HeaderOf(image);
+	h->prototypeTableLength = 0x20000000u; // *sizeof(zCPrototype) dwarfs the file
 	ExpectRejected(std::move(image), zE_BufferOverrun);
 }

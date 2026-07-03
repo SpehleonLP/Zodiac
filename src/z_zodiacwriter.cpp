@@ -536,7 +536,13 @@ std::vector<zCTypeInfo> zCZodiacWriter::WriteProperties(asIScriptEngine * engine
 
 		for(uint32_t j = 0; j < mod->GetObjectTypeCount(); ++j)
 		{
-			buffer.push_back(WriteTypeInfo(engine, mod, mod->GetObjectTypeByIndex(j), false));
+			auto * type = mod->GetObjectTypeByIndex(j);
+			// The index this type's zCTypeInfo record occupies in the saved table
+			// is exactly its position in `buffer` at push time; capture it so the
+			// prototype record can point back to this OLD layout.
+			uint32_t typeIndex = buffer.size();
+			buffer.push_back(WriteTypeInfo(engine, mod, type, false));
+			MaybeSavePrototype(typeIndex, type);
 		}
 
 		for(uint32_t j = 0; j < mod->GetEnumCount(); ++j)
@@ -712,6 +718,34 @@ void zCZodiacWriter::WriteAddressTable()
 	m_header.addressTableOffset = m_file->tell();
 	m_file->Write(m_addressTable.data(), m_addressTable.size());
 	m_header.addressTableLength = m_addressTable.size();
+}
+
+void zCZodiacWriter::MaybeSavePrototype(uint32_t typeIndex, asITypeInfo * type)
+{
+	auto provider = m_parent->GetPrototypeProvider();
+	if(!provider)
+		return;
+
+	// The provider owns the returned object's lifetime (Zodiac never AddRef/Release
+	// it); a null return means "no prototype for this type".
+	asIScriptObject * proto = provider(m_parent->GetUserData(), type);
+	if(!proto)
+		return;
+
+	// Ride the normal saved-object machinery: this enqueues the default instance so
+	// ProcessQueue later writes its property payload and assigns it an address-table
+	// entry. `address` is a stable m_stack index available immediately.
+	int address = SaveScriptObject(proto, type->GetTypeId(), nullptr);
+	m_prototypes.push_back({ typeIndex, (uint32_t)address });
+}
+
+void zCZodiacWriter::WritePrototypeTable()
+{
+	// Zero-length when no provider is set (m_prototypes empty): the offset still
+	// points inside the file so Verify()'s InFile check passes with bytes == 0.
+	m_header.prototypeTableOffset = m_file->tell();
+	m_file->Write(m_prototypes.data(), m_prototypes.size());
+	m_header.prototypeTableLength = m_prototypes.size();
 }
 
 void zCZodiacWriter::WriteFunctionTable()

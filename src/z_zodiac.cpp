@@ -57,6 +57,7 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 		writer.WriteProperties();
 		writer.WriteFunctionTable();
 		writer.WriteAddressTable();
+		writer.WritePrototypeTable();
 		writer.WriteStringTable();
 
 

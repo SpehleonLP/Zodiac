@@ -42,6 +42,11 @@ zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::
 	m_typeInfo			= GetTypeInfo();
 	m_globals			= GetGlobals();
 
+	// Prototype table is proven in-range by Verify(); copy it out for the Task 4
+	// merge. Empty when the image has no prototype table (unset-provider save).
+	if(prototypeTableLength())
+		m_prototypes.assign(GetPrototypes(), GetPrototypes() + prototypeTableLength());
+
 	m_loadedObjects.reset(new LoadedInfo[addressTableLength()]);
 	memset(&m_loadedObjects[0], 0, addressTableLength() * sizeof(LoadedInfo));
 
@@ -145,6 +150,8 @@ void zCZodiacReader::Verify() const
 		throw Exception("templates", zE_BufferOverrun);
 	if(!InFile(m_header->byteCodeOffset,      m_header->byteCodeByteLength, 1,             fileLen))
 		throw Exception("byte code", zE_BufferOverrun);
+	if(!InFile(m_header->prototypeTableOffset, prototypeTableLength(), sizeof(zCPrototype), fileLen))
+		throw Exception("prototype table", zE_BufferOverrun);
 
 //-----------------------
 //  STRING TABLE MUST BE NUL-TERMINATED AT ITS FINAL BYTE
@@ -346,6 +353,24 @@ void zCZodiacReader::Verify() const
 			if((uint64_t)p.offset + (uint32_t)p.byteLength > entry.byteLength)
 				throw Exception("property extent in entry", zE_BufferOverrun);
 		}
+	}
+
+//-----------------------
+//  CHECK PROTOTYPES
+//  Each record names a saved typeInfo entry (the OLD layout) and the object-
+//  address-table id of that type's default payload. Both are file-supplied and
+//  are bounded here so the Task 4 merge can index m_typeInfo / dereference the
+//  entry offset without an OOB read.
+//-----------------------
+	for(uint32_t i = 0; i < prototypeTableLength(); ++i)
+	{
+		auto & proto = GetPrototypes()[i];
+
+		if(proto.typeId >= typeInfoLength())
+			throw Exception("typeId in prototype", zE_BufferOverrun);
+
+		if(proto.address >= addressTableLength())
+			throw Exception("address in prototype", zE_BufferOverrun);
 	}
 }
 
@@ -1227,6 +1252,56 @@ void zCZodiacReader::RestoreScriptObject(void * dst, void const* src, uint asTyp
 			LoadScriptObject(dst, *(uint32_t*)src, asTypeId);
 		}
 	}
+}
+
+bool zCZodiacReader::GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, asIScriptObject ** newProto)
+{
+	// OLD side: locate the saved prototype record for this typeInfo index.
+	const zCPrototype * rec = nullptr;
+	for(auto & p : m_prototypes)
+	{
+		if((int)p.typeId == typeIdIndex)
+		{
+			rec = &p;
+			break;
+		}
+	}
+
+	if(rec == nullptr)
+		return false;   // no default recorded for this type
+
+	auto provider = m_parent->GetPrototypeProvider();
+	if(provider == nullptr)
+		return false;   // no way to build the NEW side
+
+	// NEW side: build the freshly-provided default instance for the live type once,
+	// then memoize it (the provider owns its lifetime, so we never AddRef/Release).
+	asIScriptObject * proto = nullptr;
+	auto it = m_newProtos.find(typeIdIndex);
+	if(it != m_newProtos.end())
+	{
+		proto = it->second;
+	}
+	else
+	{
+		if((uint32_t)typeIdIndex < typeInfoLength())
+		{
+			auto liveTypeId = m_asTypeIdFromStored[typeIdIndex];
+			auto * typeInfo = GetEngine()->GetTypeInfoById(liveTypeId);
+			if(typeInfo)
+				proto = provider(m_parent->GetUserData(), typeInfo);
+		}
+		m_newProtos.emplace(typeIdIndex, proto);
+	}
+
+	if(proto == nullptr)
+		return false;
+
+	// rec->address is bounded by Verify(); the OLD default's payload is read straight
+	// from the saved-object region (no object is constructed for it).
+	if(oldPayload) *oldPayload = (const uint8_t*)(m_mmap.GetAddress() + m_entries[rec->address].offset);
+	if(newProto)   *newProto   = proto;
+	return true;
 }
 
 asITypeInfo * zCZodiacReader::LoadTypeInfo(int id, bool RefCount)

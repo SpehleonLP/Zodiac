@@ -13,7 +13,14 @@ namespace Zodiac
 //   v1 (2026-07-01): string table entries are length-prefixed (uint32 byte
 //                    count stored immediately before each string's data) so
 //                    strings with embedded NUL bytes round-trip.
-static constexpr uint zZODIAC_FORMAT_VERSION = 1;
+//   v2 (2026-07-03): optional embedded prototype table (per-type default-object
+//                    layouts) plus its {offset,length} header pair, for the
+//                    hot-reload three-way property merge. When no prototype
+//                    provider is set the table is zero-length (its offset still
+//                    points inside the file), so an unset-provider save differs
+//                    from a v1 image only by the wider header — the payload is
+//                    otherwise unchanged.
+static constexpr uint zZODIAC_FORMAT_VERSION = 2;
 
 struct zCEntry
 {
@@ -89,6 +96,20 @@ struct zCProperty
 	int  byteLength;
 };
 
+// One record per in-scope script-object type for which the prototype provider
+// returned a default instance at save time. `typeId` indexes the saved zCTypeInfo
+// table (the OLD type's layout). `address` is the object-address-table id of the
+// prototype's saved property payload, written through the normal saved-object
+// machinery (SaveScriptObject). Both fields are file-supplied and are range-checked
+// in Verify() (typeId < typeInfoLength(), address < addressTableLength()) before
+// anything derefs them. The load side pairs this OLD payload with a freshly built
+// NEW prototype to run the three-way property merge (parent Task 4).
+struct zCPrototype
+{
+	uint typeId;
+	uint address;
+};
+
 struct zCHeader
 {
 	zCHeader()
@@ -142,6 +163,10 @@ struct zCHeader
 
 	uint globalsOffset{};
 	uint globalsLength{};
+
+//prototypes (optional; zero-length + offset-inside-file when no provider is set)
+	uint prototypeTableOffset{};
+	uint prototypeTableLength{};
 };
 
 

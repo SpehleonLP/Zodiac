@@ -27,6 +27,12 @@ struct TypeEntry;
 
 	void    SetSaveScope(const char * moduleName) override;
 	void    SetModuleRemap(const char * savedName, const char * liveName) override;
+	void    SetPrototypeProvider(zPROTO_FUNC_t p) override { m_protoProvider = p; }
+
+	// Concrete-only accessor (not on the zIZodiac interface): the writer and reader
+	// hold a zCZodiac* and read the installed provider through this. Null = feature
+	// off (no prototype table written / no prototype merge on load).
+	zPROTO_FUNC_t GetPrototypeProvider() const { return m_protoProvider; }
 
 	Code    SaveToFile(zIFileDescriptor *)	 override;
 	Code	LoadFromFile(zIFileDescriptor *) override;
@@ -81,6 +87,12 @@ private:
 	// Empty = whole-engine save. Non-empty = restrict SaveToFile to the named
 	// module (see zIZodiac::SetSaveScope).
 	std::string m_saveScope;
+
+	// Prototype provider (see zIZodiac::SetPrototypeProvider / zPROTO_FUNC_t).
+	// Null (default) = no prototype table is written and load does no prototype
+	// work. Lives on the facade so it survives the whole Save/LoadFromFile call;
+	// the writer and reader read it through GetPrototypeProvider().
+	zPROTO_FUNC_t m_protoProvider{};
 
 	// Load-side savedName -> liveName module rename table (see SetModuleRemap).
 	// Empty = no remap (every module resolves under its recorded name). Passed

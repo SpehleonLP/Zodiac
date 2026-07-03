@@ -27,6 +27,7 @@ public:
 	void WriteProperties();
 	void WriteFunctionTable();
 	void WriteAddressTable();
+	void WritePrototypeTable();
 	void WriteStringTable();
 
 
@@ -73,6 +74,10 @@ private:
 	std::vector<zCTypeInfo> WriteProperties(asIScriptEngine * engine, std::vector<zCModule> & modules);
 
 	zCTypeInfo WriteTypeInfo(asIScriptEngine * engine, asIScriptModule * _module, asITypeInfo * type, bool registered);
+	// If a prototype provider is installed, ask it for `type`'s default instance;
+	// on a non-null return, embed that instance's payload (via SaveScriptObject) and
+	// record a zCPrototype linking the saved typeInfo index `typeIndex` to it.
+	void MaybeSavePrototype(uint32_t typeIndex, asITypeInfo * type);
 	void WriteScriptObject(const void * ptr, int typeId);
 	uint32_t GetByteLengthOfType(asIScriptEngine * engine, asIScriptModule * _module, uint32_t typeId);
 	uint32_t InsertString(const char * data, uint32_t len);
@@ -93,6 +98,10 @@ private:
 	std::vector<zCTypeInfo>     m_typeInfo;
 	std::vector<zCTemplate> m_templates;
 	std::vector<int>                m_ttypeList;
+	// One record per in-scope script-object type whose prototype provider returned
+	// a default instance. Collected during WriteProperties, serialized by
+	// WritePrototypeTable. Empty when no provider is set.
+	std::vector<zCPrototype>        m_prototypes;
 
 
 	std::vector<uint32_t> stringAddress{0};
