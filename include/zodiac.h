@@ -61,7 +61,9 @@ enum Code
 
 	zE_AlreadyLoading					= -22,
 	zE_AlreadySaving					= -23,
-	zE_Total							= 24
+	zE_IOError							= -24,
+	zE_EngineCorrupted					= -25,
+	zE_Total							= 26
 };
 
 enum zTYPEID
@@ -213,6 +215,12 @@ struct WriteSubFile;
 	// real file (e.g. an in-memory buffer). Used by zCMemoryMap to prefer a
 	// read-only mmap over a full malloc+copy of the file.
 	virtual int GetFileDescriptor() const { return -1; }
+
+	// Flush any buffered output to the OS. Default no-op for in-memory descriptors
+	// (nothing is buffered). A real-file descriptor overrides this to fflush and
+	// throw Zodiac::zE_IOError on failure, so SaveToFile can surface a delayed
+	// write error (e.g. ENOSPC) before it reports success.
+	virtual bool Flush() { return true; }
 
 protected:
 	virtual void PushSubFile(uint, uint) = 0;

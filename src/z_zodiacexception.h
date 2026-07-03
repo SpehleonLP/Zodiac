@@ -42,7 +42,9 @@ public:
 			"End Of File",
 			"Bad File Type",
 			"Already Loading",
-			"Already Saving"
+			"Already Saving",
+			"IO Error",
+			"Engine Corrupted"
 		};
 
 		static_assert(sizeof(strings) / sizeof(strings[0]) == (unsigned)Code::zE_Total,
