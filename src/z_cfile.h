@@ -22,6 +22,7 @@ public:
 
 	int Read(void *ptr, uint size) override;
 	int Write(const void *ptr, uint size) override;
+	bool Flush() override;
 
 	void seek(int, Flags) override;
 	uint tell() const override;

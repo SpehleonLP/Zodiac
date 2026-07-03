@@ -42,6 +42,10 @@ zCFile::~zCFile()
 {
 	free(stack);
 
+	// F2: best-effort close. Finish() already flushed-and-checked via Flush()
+	// inside the SaveToFile try-block, so any real ENOSPC/EIO already surfaced
+	// there as a Code. The destructor runs after SaveToFile returned and cannot
+	// report an error, so we do not check fclose's result here.
 	if(ownsFile)
 		fclose(file);
 }
@@ -66,15 +70,37 @@ int zCFile::Write(const void *ptr, uint size)
 {
 	auto end = size + ftell(file);
 
+	// W2: crossing a sub-file boundary on WRITE is a logic error, not a
+	// recoverable clamp. Abort the save rather than silently truncating.
 	if(end > stack[stackPos].end)
 	{
-		errno = EIO;
-		size  = std::max<int64_t>((int64_t)stack[stackPos].end - ftell(file), 0);
+		throw Exception(zE_BadSubFileAddress);
 	}
 
 	int r = fwrite(ptr, 1, size, file);
 
+	// W1: a short or failed write must abort the save (mapped to a Code at the
+	// SaveToFile boundary), never silently drop bytes.
+	if((uint)r != size || ferror(file))
+	{
+		throw Exception(zE_IOError);
+	}
+
 	return r;
+}
+
+bool zCFile::Flush()
+{
+	// F1: flush buffered output to the OS and surface any deferred ENOSPC/EIO.
+	// Throws (rather than returning false) so it maps to a Code through the
+	// SaveToFile try-block, consistent with Write; returns true on success to
+	// honor the bool contract for any caller that checks it.
+	if(fflush(file) != 0 || ferror(file))
+	{
+		throw Exception(zE_IOError);
+	}
+
+	return true;
 }
 
 void zCFile::seek(int offset, Flags flags)

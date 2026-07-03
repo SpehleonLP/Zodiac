@@ -34,7 +34,7 @@ public:
 
 	void WriteHeader();
 
-	void Finish() {}
+	void Finish() { if(m_file) m_file->Flush(); }
 
 	zIFileDescriptor * GetFile() const override { return m_file; }
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); };
