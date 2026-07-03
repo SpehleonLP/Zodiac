@@ -3,6 +3,7 @@
 #ifdef HAVE_ZODIAC
 #include "zodiac.h"
 #include <atomic>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,7 @@ struct TypeEntry;
 	bool    GetProperty(zZodiacProp property) const override { return m_options & (1 << property); }
 
 	void    SetSaveScope(const char * moduleName) override;
+	void    SetModuleRemap(const char * savedName, const char * liveName) override;
 
 	Code    SaveToFile(zIFileDescriptor *)	 override;
 	Code	LoadFromFile(zIFileDescriptor *) override;
@@ -79,6 +81,12 @@ private:
 	// Empty = whole-engine save. Non-empty = restrict SaveToFile to the named
 	// module (see zIZodiac::SetSaveScope).
 	std::string m_saveScope;
+
+	// Load-side savedName -> liveName module rename table (see SetModuleRemap).
+	// Empty = no remap (every module resolves under its recorded name). Passed
+	// by pointer to the reader so ResolveModuleName can consult it. Lives on the
+	// facade so it survives for the whole LoadFromFile call.
+	std::map<std::string, std::string> m_moduleRemap;
 
 //the beauty of these things is that they avoid clunky try/catch statements
 	struct ClearBoolOnDestruct

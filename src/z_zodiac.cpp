@@ -119,7 +119,7 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	try
 	{
 		SortTypeList();
-		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps));
+		reader.reset(new zCZodiacReader(this, file, m_progress, m_totalSteps, &m_moduleRemap));
 		changedEngineState = reader->LoadByteCode(m_engine);
 		reader->ProcessModules(m_engine, changedEngineState);
 		reader->DocumentGlobalVariables(m_engine);
@@ -215,6 +215,14 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 void zCZodiac::SetSaveScope(const char * moduleName)
 {
 	m_saveScope = moduleName ? moduleName : "";
+}
+
+void zCZodiac::SetModuleRemap(const char * savedName, const char * liveName)
+{
+	if(savedName == nullptr || liveName == nullptr)
+		return;
+
+	m_moduleRemap[savedName] = liveName;
 }
 
 int  zCZodiac::RegisterTypeCallback(uint32_t zTypeId, uint32_t byteLength, const char * name, zSAVE_FUNC_t onSave, zLOAD_FUNC_t onLoad, const char * nameSpace, bool isValueType)

@@ -8,6 +8,8 @@
 #include <memory>
 #include <atomic>
 #include <cstring>
+#include <map>
+#include <string>
 
 namespace Zodiac
 {
@@ -17,8 +19,22 @@ class zCZodiac;
 class zCZodiacReader : public zIZodiacReader
 {
 public:
-	zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps);
+	zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps, std::map<std::string, std::string> const* moduleRemap = nullptr);
 	~zCZodiacReader();
+
+	// Maps a module name recorded in the file to the name it should resolve to
+	// in the live engine (hot reload: pkg#1 -> pkg#2). Returns savedName
+	// unchanged when there is no remap entry, so no-remap loads are identical.
+	const char * ResolveModuleName(const char * savedName) const
+	{
+		if(m_moduleRemap && savedName)
+		{
+			auto it = m_moduleRemap->find(savedName);
+			if(it != m_moduleRemap->end())
+				return it->second.c_str();
+		}
+		return savedName;
+	}
 
 	int GetModuleIndex(const char * name, uint32_t quickCheck = ~0u) const;
 	zCGlobalInfo const* GetGlobalVar(uint32_t _module, const char * name, const char * nameSpace, uint32_t quickCheck = ~0u) const;
@@ -136,6 +152,10 @@ friend class zCZodiac;
 
 	zCZodiac * m_parent;
 	zIFileDescriptor * m_file;
+
+	// savedName -> liveName rename table owned by the facade (see SetModuleRemap).
+	// Null / absent-entry = resolve under the recorded name (unchanged behavior).
+	std::map<std::string, std::string> const* m_moduleRemap{};
 
 	// Owner of the entry whose onLoad is currently executing (see GetCurrentOwner).
 	// Set with save/restore around each onLoad dispatch in RestoreAppObject so a

@@ -130,6 +130,15 @@ public:
 	// type entries (handle values), never as object state.
 	virtual void SetSaveScope(const char * moduleName) = 0;
 
+	// When loading, any module recorded in the file under `savedName` is
+	// resolved in the live engine as `liveName`. Hot reload serializes the
+	// retiring module ("pkg#1") and restores against the freshly compiled
+	// one ("pkg#2"). May be called multiple times for multiple modules.
+	// With zZP_SAVE_BYTECODE off the save carries no bytecode, so load
+	// resolves modules asGM_ONLY_IF_EXISTS and fails with zE_ModuleDoesNotExist
+	// if the (remapped) target module is absent from the live engine.
+	virtual void SetModuleRemap(const char * savedName, const char * liveName) = 0;
+
 // progress / total steps for progress bar.
 	virtual Code    SaveToFile(zIFileDescriptor *) = 0;
 	virtual Code    LoadFromFile(zIFileDescriptor *) = 0;

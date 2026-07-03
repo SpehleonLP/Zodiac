@@ -13,9 +13,10 @@
 namespace Zodiac
 {
 
-zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps) :
+zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps, std::map<std::string, std::string> const* moduleRemap) :
 	m_parent(parent),
 	m_file(file),
+	m_moduleRemap((moduleRemap && !moduleRemap->empty()) ? moduleRemap : nullptr),
 	m_mmap(file),
 	m_progress(progress),
 	m_totalSteps(total_steps)
@@ -472,10 +473,24 @@ bool zCZodiacReader::LoadByteCode(asIScriptEngine * engine)
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
 //		bool created = false;
-		auto moduleName = LoadString(m_modules[i].name);
+		auto moduleName = ResolveModuleName(LoadString(m_modules[i].name));
+
+		// A scoped save made with zZP_SAVE_BYTECODE off carries no bytecode
+		// payload for this module (byteCodeLength == 0, recorded by the writer's
+		// WriteByteCode when saveByteCode is false). The code must already exist
+		// in the live engine (freshly recompiled during hot reload): resolve
+		// ONLY_IF_EXISTS and fail cleanly if it is absent. Never create an empty
+		// module and never call LoadByteCode with a zero-length span.
+		if(m_modules[i].byteCodeLength == 0)
+		{
+			if(!engine->GetModule(moduleName, asGM_ONLY_IF_EXISTS))
+				throw Exception(zE_ModuleDoesNotExist);
+			continue;
+		}
+
 		asIScriptModule * _module = engine->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
-		if(!_module && m_modules[i].byteCodeLength != 0)
+		if(!_module)
 		{
 			_module = engine->GetModule(moduleName, asGM_ALWAYS_CREATE);
 
@@ -512,7 +527,7 @@ void zCZodiacReader::ProcessModules(asIScriptEngine * engine, bool loadedByteCod
 //solve typeinfo
 	for(uint32_t i = 0; i < moduleDataLength() - 1; ++i)
 	{
-		asIScriptModule * _module = engine->GetModule(LoadString(m_modules[i].name), asGM_ONLY_IF_EXISTS);
+		asIScriptModule * _module = engine->GetModule(ResolveModuleName(LoadString(m_modules[i].name)), asGM_ONLY_IF_EXISTS);
 		if(!_module) throw Exception(zE_ModuleDoesNotExist);
 		SolveTypeInfo(_module, i);
 	}
@@ -576,7 +591,7 @@ void  zCZodiacReader::SolveTemplates(asIScriptEngine * engine)
 		asIScriptModule * _module = nullptr;
 		if(ti->_module)
 		{
-			_module = engine->GetModule(LoadString(ti->_module), asGM_ONLY_IF_EXISTS);
+			_module = engine->GetModule(ResolveModuleName(LoadString(ti->_module)), asGM_ONLY_IF_EXISTS);
 			if(!_module) throw Exception(zE_ModuleDoesNotExist);
 		}
 
@@ -633,16 +648,20 @@ int  zCZodiacReader::asGetProperty(asITypeInfo * typeInfo, const char * pName, i
 
 int zCZodiacReader::GetModuleIndex(const char * name, uint32_t quickCheck) const
 {
+	// `name` is a LIVE engine module name; the saved records store the ORIGINAL
+	// (pre-remap) names. Resolve each saved name through the remap table before
+	// comparing so a remapped restore (pkg#1 -> pkg#2) still finds its record.
+	// Without a remap, ResolveModuleName is the identity and behavior is unchanged.
 	if(quickCheck < moduleDataLength())
 	{
-		if(strcmp(LoadString(m_modules[quickCheck].name), name) == 0)
+		if(strcmp(ResolveModuleName(LoadString(m_modules[quickCheck].name)), name) == 0)
 			return quickCheck;
 	}
 
 
 	for(uint32_t i = 0; i < moduleDataLength(); ++i)
 	{
-		if(strcmp(LoadString(m_modules[i].name), name) == 0)
+		if(strcmp(ResolveModuleName(LoadString(m_modules[i].name)), name) == 0)
 			return i;
 	}
 
@@ -1267,7 +1286,7 @@ asIScriptFunction * zCZodiacReader::LoadFunction(int id)
 	}
 	else if(function._module)
 	{
-		auto moduleName = LoadString(function._module);
+		auto moduleName = ResolveModuleName(LoadString(function._module));
 		auto _module = GetEngine()->GetModule(moduleName, asGM_ONLY_IF_EXISTS);
 
 		if(!_module)
