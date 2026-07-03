@@ -315,9 +315,9 @@ void zCZodiac::SortTypeList()
 			if(0 == (typeId->GetFlags() & asOBJ_POD))
 			{
 				if(typeId->GetNamespace())
-					throw std::logic_error(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName());
+					throw Exception(std::string("Missing entry for loading/saving ") + typeId->GetNamespace() + "::" + typeId->GetName(), zE_ObjectUnserializable);
 				else
-					throw std::logic_error(std::string("Missing entry for loading/saving ") + typeId->GetName());
+					throw Exception(std::string("Missing entry for loading/saving ") + typeId->GetName(), zE_ObjectUnserializable);
 			}
 
 			TypeEntry entry;
