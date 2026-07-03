@@ -957,6 +957,11 @@ void zCZodiacReader::PopulateTable(void * dst, uint32_t address, int typeId)
 //first loop populate lookup table
 	for(auto p = begin; p < end; ++p)
 	{
+//Drift skip: a property removed from the live type has no destination slot
+//(propertyId sentinel ~0u). Parity with the two sibling loops in
+//RestoreScriptObjectContents; without it GetPropertyTypeId(~0u) trips the assert below.
+		if(p->propertyId == ~0u) continue;
+
 		auto typeId   = p->writeType;
 		auto offset   = ref->GetAddressOfProperty(p->propertyId);
 		uint32_t read = *(uint32_t*)((uint8_t*)src + p->readOffset);

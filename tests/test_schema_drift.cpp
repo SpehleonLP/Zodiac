@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 #include <cstring>
 #include <vector>
+#include <unistd.h>
 
 using namespace Zodiac;
 using namespace zodiac_test;
@@ -42,6 +43,22 @@ const char * kSaveSource =
 	"    obj.a = 111;\n"
 	"    obj.b = 222;\n"
 	"    obj.sentinel = 333;\n"
+	"}\n";
+
+// Nested shape: Outer owns Inner by COMPOSITION (`Inner b;`, no `@`), so restoring
+// Outer recurses into Inner through PopulateTable (the non-handle script-object
+// member branch) — the ONLY loop over m_properties that a top-level global does not
+// exercise. `sentinel` (`z`) is declared after `y` so a removed-`y` drift proves the
+// PopulateTable loop continued past the gap.
+const char * kNestedSaveSource =
+	"class Inner { int x; int y; int z; }\n"
+	"class Outer { Inner b; }\n"
+	"Outer@ o;\n"
+	"void setup() {\n"
+	"    @o = Outer();\n"
+	"    o.b.x = 11;\n"
+	"    o.b.y = 22;\n"
+	"    o.b.z = 33;\n"
 	"}\n";
 
 std::unique_ptr<zIZodiac> MakeZodiac(asIScriptEngine * engine)
@@ -82,6 +99,27 @@ std::vector<char> SaveImage()
 	asIScriptModule * mod = engine->GetModule("m", asGM_ALWAYS_CREATE);
 	EXPECT_NE(mod, nullptr);
 	EXPECT_GE(mod->AddScriptSection("m", kSaveSource), 0);
+	EXPECT_GE(mod->Build(), 0);
+
+	asIScriptFunction * setup = mod->GetFunctionByDecl("void setup()");
+	EXPECT_NE(setup, nullptr);
+	asIScriptContext * ctx = engine->CreateContext();
+	EXPECT_GE(ctx->Prepare(setup), 0);
+	EXPECT_EQ(ctx->Execute(), asEXECUTION_FINISHED);
+	ctx->Release();
+
+	auto zodiac = MakeZodiac(engine.get());
+	zCMemoryFile file;
+	EXPECT_EQ(zodiac->SaveToFile(&file), zE_Success);
+	return file.bytes();
+}
+
+std::vector<char> SaveNestedImage()
+{
+	TestEngine engine;
+	asIScriptModule * mod = engine->GetModule("m", asGM_ALWAYS_CREATE);
+	EXPECT_NE(mod, nullptr);
+	EXPECT_GE(mod->AddScriptSection("m", kNestedSaveSource), 0);
 	EXPECT_GE(mod->Build(), 0);
 
 	asIScriptFunction * setup = mod->GetFunctionByDecl("void setup()");
@@ -164,6 +202,57 @@ TEST(SchemaDrift, AddedPropertyLoadsLeavingNewDefault)
 	EXPECT_EQ(PropInt(obj, "a"), 111) << "stored 'a' not restored";
 	EXPECT_EQ(PropInt(obj, "b"), 222) << "stored 'b' not restored";
 	EXPECT_EQ(PropInt(obj, "sentinel"), 333) << "stored 'sentinel' not restored";
-	// 'c' is intentionally NOT asserted to any value — it is left at whatever the
-	// uninitialized script object carries; the point is only that load succeeded.
+}
+
+// Property REMOVED on a NESTED, composed type (Outer owns `Inner b`): the restore
+// reaches Inner's removed-property slot through PopulateTable's non-handle-member
+// walk, NOT the two RestoreScriptObjectContents loops a top-level global uses. This
+// is the loop the top-level RemovedPropertySkipped test does not cover. Pre-fix the
+// PopulateTable loop hit `assert(writeType == GetPropertyTypeId(~0u))` and ABORTED
+// on legitimate nested drift; post-fix it drift-skips and loads. Run in a death test
+// so a regression's abort is contained (ExitedWithCode(0) == GREEN, a SIGABRT == RED).
+TEST(SchemaDrift, NestedRemovedPropertySkipped)
+{
+	std::vector<char> image = SaveNestedImage();
+	ASSERT_FALSE(image.empty());
+
+	// Inner drops the middle 'y'; Outer's composition of Inner is unchanged.
+	const char * drift =
+		"class Inner { int x; int z; }\n"
+		"class Outer { Inner b; }\n"
+		"Outer@ o;\n";
+
+	EXPECT_EXIT({
+		TestEngine engine;
+		asIScriptModule * mod = nullptr;
+		Code rc = LoadIntoDrifted(drift, image, engine, mod);
+		if(rc != zE_Success || mod == nullptr) _exit(1);
+
+		int oidx = mod->GetGlobalVarIndexByName("o");
+		if(oidx < 0) _exit(2);
+		asIScriptObject * outer = ReadHandle(mod->GetAddressOfGlobalVar(oidx));
+		if(outer == nullptr) _exit(3);
+
+		// `b` is a composed (non-handle) Inner member: GetAddressOfProperty yields the
+		// object pointer directly; a handle member would need a deref (ReadHandle).
+		asIScriptObject * inner = nullptr;
+		for(asUINT i = 0; i < outer->GetPropertyCount(); ++i)
+		{
+			const char * pn = outer->GetPropertyName(i);
+			if(pn && std::strcmp(pn, "b") == 0)
+			{
+				void * addr = outer->GetAddressOfProperty(i);
+				inner = (outer->GetPropertyTypeId(i) & asTYPEID_OBJHANDLE)
+				        ? ReadHandle(addr) : (asIScriptObject*)addr;
+				break;
+			}
+		}
+		if(inner == nullptr) _exit(4);
+
+		if(PropInt(inner, "x") != 11) _exit(5);   // survives, before the gap
+		if(PropInt(inner, "z") != 33) _exit(6);   // survives, after the gap
+		if(PropInt(inner, "y") != -0x0BADBEEF) _exit(7);   // removed -> absent
+		_exit(0);
+	}, ::testing::ExitedWithCode(0), ".*")
+		<< "nested removed-property drift must skip and load, not abort";
 }
