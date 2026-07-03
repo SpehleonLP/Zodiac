@@ -163,6 +163,10 @@ friend class zCZodiac;
 		int zTypeId;
 		short needRelease;
 		bool beingLoaded;
+		// True while address is on the active owner-resolve chain (see the owner-restore
+		// block in LoadScriptObjectImpl); catches mutual/longer owner cycles that the
+		// self-owner guard and beingLoaded miss. Array is memset to 0 on allocation.
+		bool ownerResolving = false;
 	};
 
 	std::vector<int>		m_asTypeIdFromStored;

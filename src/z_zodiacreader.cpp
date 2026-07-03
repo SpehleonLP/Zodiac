@@ -939,10 +939,20 @@ void zCZodiacReader::LoadScriptObjectImpl(void * dst, int address, int asTypeId,
 			throw Exception(zE_BadObjectAddress);
 		auto ownrTypeId =  LoadTypeId(m_entries[ownr].typeId);
 
+//A mutual/longer owner cycle (A owns B, B owns A; or A->B->C->A) isn't caught by the
+//self-owner guard above, and beingLoaded isn't set during this owner walk (only inside
+//RestoreAppObject), so it would ping-pong through LoadScriptObjectImpl until the C stack
+//overflows. ownerResolving marks addresses on the *current* owner-resolve chain; re-entering
+//one rejects the cycle regardless of its length.
+		if(m_loadedObjects[ownr].ownerResolving)
+			throw Exception(zE_BadObjectAddress);
+
 //load owner if it isn't loaded (check to avoid addreffing it i guess)
 		if(!m_loadedObjects[ownr].ptr && !m_loadedObjects[ownr].beingLoaded)
 		{
+			m_loadedObjects[address].ownerResolving = true;
 			LoadScriptObject(&ptr, ownr, ownrTypeId | asTYPEID_OBJHANDLE, false);
+			m_loadedObjects[address].ownerResolving = false;
 		}
 	}
 
