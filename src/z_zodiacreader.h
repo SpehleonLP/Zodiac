@@ -165,7 +165,8 @@ friend class zCZodiac;
 		bool beingLoaded;
 		// True while address is on the active owner-resolve chain (see the owner-restore
 		// block in LoadScriptObjectImpl); catches mutual/longer owner cycles that the
-		// self-owner guard and beingLoaded miss. Array is memset to 0 on allocation.
+		// self-owner guard and beingLoaded miss. Default-initialized to false on every
+		// `new LoadedInfo[]` element via this member initializer.
 		bool ownerResolving = false;
 	};
 
