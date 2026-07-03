@@ -89,3 +89,36 @@ TEST(OwnerCycle, SelfOwningEntryRejectedWithoutRecursion)
 	}, ::testing::ExitedWithCode(0), ".*")
 		<< "a self-owning entry must be rejected without unbounded recursion";
 }
+
+// Companion to the self-owner case: a *mutual* owner cycle (entry A owns B, B owns
+// A). The self-owner guard at z_zodiacreader.cpp:938 only rejects ownr == address,
+// and beingLoaded is not set until :771 — AFTER the owner-restore block — so the
+// two-cycle slips past both Verify() (both indices are in range) and the runtime
+// guard, and LoadScriptObjectImpl ping-pongs A->B->A forever until the C stack
+// overflows. The trust-boundary contract is a thrown Zodiac::Code, not a crash.
+TEST(OwnerCycle, MutualOwnerCycleRejectedWithoutRecursion)
+{
+	std::vector<char> image = BuildValidImage();
+	ASSERT_FALSE(image.empty());
+
+	auto * h = reinterpret_cast<zCHeader *>(image.data() + image.size() - sizeof(zCHeader));
+	// Need two real object entries (entry 0 is the null sentinel) to cross-link.
+	ASSERT_GE(h->addressTableLength, 3u);
+	auto * entries = reinterpret_cast<zCEntry *>(image.data() + h->addressTableOffset);
+	// entry 1 owns entry 2, entry 2 owns entry 1 — neither owns itself, so the
+	// self-owner branch never fires; every index stays < addressTableLength so
+	// Verify() admits the image. Zero the rest to isolate the cycle.
+	for(uint32_t i = 1; i < h->addressTableLength; ++i)
+		entries[i].owner = 0;
+	entries[1].owner = 2;
+	entries[2].owner = 1;
+
+	EXPECT_EXIT({
+		TestEngine engine;
+		auto zodiac = MakeZodiac(engine.get());
+		zCMemoryFile file(image);
+		try { zodiac->LoadFromFile(&file); } catch(...) {}
+		_exit(0);
+	}, ::testing::ExitedWithCode(0), ".*")
+		<< "a mutual owner cycle must be rejected without unbounded recursion";
+}
