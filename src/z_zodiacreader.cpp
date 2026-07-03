@@ -746,6 +746,17 @@ bool zCZodiacReader::RestoreAppObject(void * dst, int address, int asTypeId)
 
 	void const* src = m_mmap.GetAddress() + m_entries[address].offset;
 
+	// Expose the enclosing owner (already restored) to the entry's onLoad, so an
+	// app entry can attach the object it builds to the object that owns it. Owner
+	// index 0 == none (same sentinel as :929). The guard save/restores across both
+	// onLoad branches AND across a nested load re-entering RestoreAppObject, and is
+	// exception-safe (the ref branch below can throw).
+	uint32_t ownerAddr = m_entries[address].owner;
+	void * savedOwner = m_currentOwner;
+	m_currentOwner = ownerAddr ? m_loadedObjects[ownerAddr].ptr : nullptr;
+	struct OwnerGuard { void *& slot; void * prev; ~OwnerGuard() { slot = prev; } }
+		ownerGuard{ m_currentOwner, savedOwner };
+
 //POD
 	if(!entry->onLoad)
 		memcpy(dst, src, entry->byteLength);

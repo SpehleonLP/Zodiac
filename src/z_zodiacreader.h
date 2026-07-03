@@ -49,6 +49,7 @@ public:
 
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }
+	void * GetCurrentOwner() const override { return m_currentOwner; }
 
 	void LoadScriptObject(void *, int address, int asTypeId, bool isWeak=false) override;
 private:
@@ -135,6 +136,11 @@ friend class zCZodiac;
 
 	zCZodiac * m_parent;
 	zIFileDescriptor * m_file;
+
+	// Owner of the entry whose onLoad is currently executing (see GetCurrentOwner).
+	// Set with save/restore around each onLoad dispatch in RestoreAppObject so a
+	// nested load restores the enclosing owner correctly. nullptr outside an onLoad.
+	void * m_currentOwner = nullptr;
 
 	zCMemoryMap	  m_mmap;
 

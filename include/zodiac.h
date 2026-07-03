@@ -260,6 +260,12 @@ public:
 	virtual zIFileDescriptor * GetFile() const = 0;
 	virtual asIScriptEngine * GetEngine() const = 0;
 
+	// During a type-callback onLoad, returns the pointer to the enclosing object
+	// whose member is being restored (Zodiac's recorded `owner` for the current
+	// entry), already restored by the time the member's onLoad fires. Returns
+	// nullptr for a top-level/ownerless entry. Valid ONLY inside an onLoad call.
+	virtual void * GetCurrentOwner() const = 0;
+
 	template<typename U, typename... Args>
 	U * LoadRefObject(uint id, void (*)(zIZodiacReader *, U **, int &, bool));
 
