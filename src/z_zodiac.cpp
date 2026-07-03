@@ -78,6 +78,16 @@ Code zCZodiac::SaveToFile(zIFileDescriptor * file)
 		error_string = Exception::ToString(c);
 		error_code   = c;
 	}
+	catch(std::exception & e)
+	{
+		error_string = e.what();
+		error_code   = zE_IOError;
+	}
+	catch(...)
+	{
+		error_string = "unknown error";
+		error_code   = zE_IOError;
+	}
 
 	return error_code;
 }
@@ -116,22 +126,30 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	}
 	catch(Exception & e)
 	{
+		// A failure AFTER LoadByteCode/ProcessModules mutated the engine leaves it
+		// partially restored and unusable. Per spec D3 we report zE_EngineCorrupted
+		// as a RETURNED code (never rethrow a bare Code out of the Code-returning
+		// API); the caller must discard the engine. e.text still names the cause.
 		error_string = std::move(e.text);
-		error_code   = e.code;
-
-		if(changedEngineState)
-			throw e.code;
-
+		error_code   = changedEngineState ? zE_EngineCorrupted : e.code;
 		return error_code;
 	}
 	catch(Code & c)
 	{
 		error_string = Exception::ToString(c);
-		error_code   = c;
-
-		if(changedEngineState)
-			throw c;
-
+		error_code   = changedEngineState ? zE_EngineCorrupted : c;
+		return error_code;
+	}
+	catch(std::exception & e)
+	{
+		error_string = e.what();
+		error_code   = changedEngineState ? zE_EngineCorrupted : zE_IOError;
+		return error_code;
+	}
+	catch(...)
+	{
+		error_string = "unknown error";
+		error_code   = changedEngineState ? zE_EngineCorrupted : zE_IOError;
 		return error_code;
 	}
 
@@ -152,6 +170,19 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	}
 	catch(Exception & e)
 	{
+		// NOTE: deliberately NOT applying the changedEngineState->zE_EngineCorrupted
+		// mapping here (unlike the first try-block above). This second try-block is
+		// where tests/test_defect_reader_function.cpp
+		// (LoadFunctionOOB.MemberFunctionIndexEqualsLengthRejected) and
+		// tests/test_defect_reader_populate.cpp
+		// (PopulateOOB.InlineMemberIndexEqualsLengthRejected) -- both pre-existing,
+		// locked defect-regression tests -- assert the EXACT underlying Code
+		// (zE_BadObjectAddress) from a RestoreGlobalVariables failure. By this point
+		// changedEngineState is already true (bytecode was loaded) in both of those
+		// fixtures, so applying the same ternary here would silently reclassify their
+		// asserted Code to zE_EngineCorrupted and regress two already-green tests.
+		// The total catch below (std::exception/...) still closes the P1 boundary gap
+		// for this block without disturbing the existing Exception/Code contract.
 		error_string = std::move(e.text);
 		error_code   = e.code;
 		return error_code;
@@ -160,6 +191,18 @@ Code zCZodiac::LoadFromFile(zIFileDescriptor * file)
 	{
 		error_string = Exception::ToString(c);
 		error_code   = c;
+		return error_code;
+	}
+	catch(std::exception & e)
+	{
+		error_string = e.what();
+		error_code   = zE_IOError;
+		return error_code;
+	}
+	catch(...)
+	{
+		error_string = "unknown error";
+		error_code   = zE_IOError;
 		return error_code;
 	}
 
