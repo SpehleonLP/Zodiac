@@ -13,6 +13,52 @@
 namespace Zodiac
 {
 
+// ---- Task 4 three-way merge helpers (file-local) --------------------------------
+// A property is "mergeable" iff its stored value is a self-contained inline scalar
+// we can compare and copy byte-for-byte: a built-in primitive (bool..double) or a
+// script/registered enum (a value type with no object/handle bits, sequence number
+// past the built-ins). Handles, script objects, strings, funcdefs and app objects
+// are NOT mergeable — their stored value is an address index, not an inline value —
+// and always keep-live.
+static bool IsMergeablePrimitive(int typeId)
+{
+	if(typeId >= asTYPEID_BOOL && typeId <= asTYPEID_DOUBLE)
+		return true;
+	return (typeId & asTYPEID_MASK_OBJECT) == 0 && typeId > asTYPEID_DOUBLE;   // enum
+}
+
+// Byte width of a mergeable primitive/enum. Enums serialize as their 4-byte
+// underlying integer (matching the enum memcpy in RestoreScriptObject).
+static uint32_t PrimitiveSize(int typeId)
+{
+	switch(typeId)
+	{
+	case asTYPEID_BOOL:
+	case asTYPEID_INT8:
+	case asTYPEID_UINT8:  return 1;
+	case asTYPEID_INT16:
+	case asTYPEID_UINT16: return 2;
+	case asTYPEID_INT32:
+	case asTYPEID_UINT32:
+	case asTYPEID_FLOAT:  return 4;
+	case asTYPEID_INT64:
+	case asTYPEID_UINT64:
+	case asTYPEID_DOUBLE: return 8;
+	default:              return 4;   // enum underlying integer
+	}
+}
+
+static bool PrimitiveEquals(const void * a, const void * b, int typeId)
+{
+	return memcmp(a, b, PrimitiveSize(typeId)) == 0;
+}
+
+static void CopyPrimitive(void * dst, const void * src, int typeId)
+{
+	memcpy(dst, src, PrimitiveSize(typeId));
+}
+// ---------------------------------------------------------------------------------
+
 zCZodiacReader::zCZodiacReader(zCZodiac * parent, zIFileDescriptor * file, std::atomic<int> & progress, std::atomic<int> & total_steps, std::map<std::string, std::string> const* moduleRemap) :
 	m_parent(parent),
 	m_file(file),
@@ -589,7 +635,18 @@ void zCZodiacReader::ProcessModules(asIScriptEngine * engine, bool loadedByteCod
 			auto prop = asGetProperty(typeInfo,LoadString(pBegin[i].name), &asTypeId, start);
 
 			if(prop == -1)
-				throw Exception(zE_UnableToRestoreProperty);
+			{
+				// Drift rule (Tier 1): the property was removed from the live type.
+				// Drop the saved value instead of failing the whole load — mark the
+				// slot skippable (propertyId sentinel ~0u) so both restore loops pass
+				// over it. Payload is offset-addressed (src + readOffset), so skipping
+				// one property never desyncs the rest.
+				m_properties[i].propertyId = ~0u;
+				m_properties[i].readOffset = pBegin[i].offset;
+				m_properties[i].readType   = LoadTypeId(pBegin[i].typeId);
+				m_properties[i].writeType  = 0;
+				continue;
+			}
 
 			start = prop+1;
 
@@ -1153,6 +1210,9 @@ void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
 //first loop populate lookup table
 	for(auto p = begin; p < end; ++p)
 	{
+//Drift skip: a property removed from the live type has no destination slot.
+		if(p->propertyId == ~0u) continue;
+
 #ifndef NDEBUG
 		auto name     = ref->GetPropertyName(p->propertyId);
 #endif
@@ -1166,9 +1226,22 @@ void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
 		PopulateTable(offset, read, typeId);
 	}
 
+//Three-way merge context for this object's type. When a prototype provider and a
+//saved prototype record are both present, protoSrc/protoLen bound the OLD default
+//payload and newProto is the freshly built NEW default. canMerge=false (unset
+//provider / no record / uninstantiable type) => every field keeps-live below, i.e.
+//byte-for-byte the pre-Task-4 behavior.
+	const uint8_t *   protoSrc = nullptr;
+	uint32_t          protoLen = 0;
+	asIScriptObject * newProto = nullptr;
+	const bool canMerge = GetPrototypeFor((int)m_entries[address].typeId, &protoSrc, &protoLen, &newProto);
+
 //Restore object contents
 	for(auto p = begin; p < end; ++p)
 	{
+//Drift skip (step 3): saved property with no live destination.
+		if(p->propertyId == ~0u) continue;
+
 #ifndef NDEBUG
 		auto name     = ref->GetPropertyName(p->propertyId);
 #endif
@@ -1179,6 +1252,35 @@ void zCZodiacReader::RestoreScriptObjectContents(void * dst, uint32_t address)
 		void * read = ((uint8_t*)src + p->readOffset);
 
 		assert(p->writeType == typeId);
+
+//Three-way merge (primitives & enums only, and only when BOTH the stored and live
+//shapes are mergeable — a type/shape change degrades to keep-live). If the object
+//never diverged from the OLD default (saved == old-default), adopt the NEW default
+//so an edited class default propagates; otherwise keep the (diverged) saved value.
+		if(canMerge
+		&& IsMergeablePrimitive(p->readType)
+		&& IsMergeablePrimitive(p->writeType))
+		{
+			const uint32_t sz = PrimitiveSize(p->readType);
+
+//TRUST BOUNDARY: the OLD-default value lives in the prototype entry's saved-object
+//region. Verify() bounded that region but NOT this field's offset within it (the
+//prototype may name a different/smaller type than this object). Bound the read
+//against protoLen BEFORE touching protoSrc; an out-of-range prototype field simply
+//degrades to keep-live, never an OOB read.
+			if((uint64_t)p->readOffset + sz <= protoLen)
+			{
+				const uint8_t * oldVal = protoSrc + p->readOffset;
+				if(PrimitiveEquals(read, oldVal, p->readType))
+				{
+//newProto is a live instance of this object's live type, so propertyId indexes it
+//validly; its value is already in the live (write) shape — a straight copy is right.
+					const void * newVal = newProto->GetAddressOfProperty(p->propertyId);
+					CopyPrimitive(offset, newVal, p->writeType);
+					continue;
+				}
+			}
+		}
 
 //A primitive member whose stored (source) width differs from the live (destination)
 //width must be CONVERTED src->dst, like top-level primitives (RestorePrimitive), not
@@ -1254,7 +1356,7 @@ void zCZodiacReader::RestoreScriptObject(void * dst, void const* src, uint asTyp
 	}
 }
 
-bool zCZodiacReader::GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, asIScriptObject ** newProto)
+bool zCZodiacReader::GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, uint32_t * oldPayloadLen, asIScriptObject ** newProto)
 {
 	// OLD side: locate the saved prototype record for this typeInfo index.
 	const zCPrototype * rec = nullptr;
@@ -1298,9 +1400,13 @@ bool zCZodiacReader::GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayloa
 		return false;
 
 	// rec->address is bounded by Verify(); the OLD default's payload is read straight
-	// from the saved-object region (no object is constructed for it).
-	if(oldPayload) *oldPayload = (const uint8_t*)(m_mmap.GetAddress() + m_entries[rec->address].offset);
-	if(newProto)   *newProto   = proto;
+	// from the saved-object region (no object is constructed for it). Verify() also
+	// proved [offset, offset+byteLength) lies inside the savedObject region, so
+	// byteLength is a trustworthy upper bound the caller uses to reject any prototype
+	// field read that would run past this entry.
+	if(oldPayload)    *oldPayload    = (const uint8_t*)(m_mmap.GetAddress() + m_entries[rec->address].offset);
+	if(oldPayloadLen) *oldPayloadLen = m_entries[rec->address].byteLength;
+	if(newProto)      *newProto      = proto;
 	return true;
 }
 

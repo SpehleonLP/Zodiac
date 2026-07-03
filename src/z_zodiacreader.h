@@ -67,12 +67,16 @@ public:
 	inline zCPrototype   const * GetPrototypes() const { return (zCPrototype const*)(m_mmap.GetAddress() + m_header->prototypeTableOffset); }
 
 	// Task 4 merge seam. For a saved zCTypeInfo index, yields the OLD default
-	// payload bytes recorded in the prototype table AND a freshly built (memoized)
-	// NEW prototype for the live type. Returns false — no merge for this type — when
+	// payload bytes recorded in the prototype table, the BYTE LENGTH of that
+	// prototype entry's saved-object region, AND a freshly built (memoized) NEW
+	// prototype for the live type. Returns false — no merge for this type — when
 	// either side is unavailable (no record, no provider, or the new type/instance
 	// cannot be built). The OLD payload is read straight from the saved-object
-	// region; no object is constructed for it.
-	bool GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, asIScriptObject ** newProto);
+	// region; no object is constructed for it. The caller MUST bound every field
+	// read against oldPayloadLen (the prototype entry's region size) before touching
+	// oldPayload — a file-supplied prototype whose field offset+size runs past the
+	// entry region is a trust-boundary hazard, not a valid read.
+	bool GetPrototypeFor(int typeIdIndex, const uint8_t ** oldPayload, uint32_t * oldPayloadLen, asIScriptObject ** newProto);
 
 	zIFileDescriptor * GetFile() const override { return m_file; };
 	asIScriptEngine * GetEngine() const override { return m_parent->zCZodiac::GetEngine(); }

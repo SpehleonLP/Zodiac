@@ -2,16 +2,16 @@
 // FUTURE hot-reload arc. This test documents the CURRENT (pre-hot-reload)
 // outcomes when a saved type's shape no longer matches the live type:
 //
-//   * property REMOVED  (save {a,b} → load into {a})        : rejected with
-//     zE_UnableToRestoreProperty (unification cannot place stored 'b').
-//   * property ADDED    (save {a,b} → load into {a,b,c})    : succeeds; 'a'/'b'
-//     restore, the new 'c' is left at its default (never visited — the restore
-//     loop walks the STORED type's properties).
+//   * property REMOVED  (save {a,b,s} → load into {a,s})    : succeeds (Task 4
+//     drift tolerance); the removed 'b' is dropped and the trailing sentinel 's'
+//     still restores, proving the restore loop continued past the gap.
+//   * property ADDED    (save {a,b,s} → load into {a,b,s,c}): succeeds; the stored
+//     fields restore, the new 'c' is left at its default (never visited — the
+//     restore loop walks the STORED type's properties).
 //
-// The hot-reload work will later deliberately FLIP the removed-property case
-// (drift tolerance: skip the missing property instead of throwing). When it
-// does, update this test — it is the tripwire that proves that behavior change
-// was intentional, not an accident.
+// Task 4 FLIPPED the removed-property case from a hard reject
+// (zE_UnableToRestoreProperty) to drift-skip + zE_Success. This test is the
+// tripwire that proves that behavior change was intentional, not an accident.
 //
 // Mechanism: bytecode is saved, but the load engine PRE-COMPILES module "m" from
 // the drifted source, so LoadByteCode sees the module already exists and keeps
@@ -31,14 +31,17 @@ using namespace zodiac_test;
 
 namespace
 {
-// Saved shape: class C { int a; int b; } with a live instance a=111, b=222.
+// Saved shape: class C { int a; int b; int sentinel; } with a live instance
+// a=111, b=222, sentinel=333. 'sentinel' is declared AFTER 'b' so a removed-'b'
+// drift can prove the restore loop continued past the gap and still placed 's'.
 const char * kSaveSource =
-	"class C { int a; int b; }\n"
+	"class C { int a; int b; int sentinel; }\n"
 	"C@ obj;\n"
 	"void setup() {\n"
 	"    @obj = C();\n"
 	"    obj.a = 111;\n"
 	"    obj.b = 222;\n"
+	"    obj.sentinel = 333;\n"
 	"}\n";
 
 std::unique_ptr<zIZodiac> MakeZodiac(asIScriptEngine * engine)
@@ -111,19 +114,32 @@ Code LoadIntoDrifted(const char * driftSource, std::vector<char> & image, TestEn
 }
 }
 
-// Property REMOVED: stored 'b' has nowhere to go → rejected (current behavior).
-TEST(SchemaDrift, RemovedPropertyRejected)
+// Property REMOVED: stored 'b' has nowhere to go → Task 4 drift-skips it and the
+// load SUCCEEDS. 'a' (before the gap) and 'sentinel' (after it) both restore,
+// proving the restore loop continued past the dropped property; 'b' is absent.
+TEST(SchemaDrift, RemovedPropertySkipped)
 {
 	std::vector<char> image = SaveImage();
 	ASSERT_FALSE(image.empty());
 
 	TestEngine engine;
 	asIScriptModule * mod = nullptr;
-	Code rc = LoadIntoDrifted("class C { int a; }\nC@ obj;\n", image, engine, mod);
+	Code rc = LoadIntoDrifted("class C { int a; int sentinel; }\nC@ obj;\n", image, engine, mod);
 
-	EXPECT_EQ(rc, zE_UnableToRestoreProperty)
-		<< "removed-property drift should currently be rejected; got "
-		<< (int)rc << " (" << engine->GetModule("m", asGM_ONLY_IF_EXISTS) << ")";
+	ASSERT_EQ(rc, zE_Success)
+		<< "removed-property drift should now skip the missing property and load; got "
+		<< (int)rc;
+	ASSERT_NE(mod, nullptr);
+
+	int gidx = mod->GetGlobalVarIndexByName("obj");
+	ASSERT_GE(gidx, 0);
+	asIScriptObject * obj = ReadHandle(mod->GetAddressOfGlobalVar(gidx));
+	ASSERT_NE(obj, nullptr) << "restored 'obj' is null";
+
+	EXPECT_EQ(PropInt(obj, "a"), 111) << "property before the gap not restored";
+	EXPECT_EQ(PropInt(obj, "sentinel"), 333) << "property after the gap not restored (loop stopped early)";
+	// 'b' no longer exists on the live type; it was dropped, not misplaced.
+	EXPECT_EQ(PropInt(obj, "b"), -0x0BADBEEF) << "removed 'b' should be absent";
 }
 
 // Property ADDED: stored {a,b} both place; the new 'c' is never visited and
@@ -135,7 +151,7 @@ TEST(SchemaDrift, AddedPropertyLoadsLeavingNewDefault)
 
 	TestEngine engine;
 	asIScriptModule * mod = nullptr;
-	Code rc = LoadIntoDrifted("class C { int a; int b; int c; }\nC@ obj;\n", image, engine, mod);
+	Code rc = LoadIntoDrifted("class C { int a; int b; int sentinel; int c; }\nC@ obj;\n", image, engine, mod);
 
 	ASSERT_EQ(rc, zE_Success) << "added-property drift should currently load";
 	ASSERT_NE(mod, nullptr);
@@ -147,6 +163,7 @@ TEST(SchemaDrift, AddedPropertyLoadsLeavingNewDefault)
 
 	EXPECT_EQ(PropInt(obj, "a"), 111) << "stored 'a' not restored";
 	EXPECT_EQ(PropInt(obj, "b"), 222) << "stored 'b' not restored";
+	EXPECT_EQ(PropInt(obj, "sentinel"), 333) << "stored 'sentinel' not restored";
 	// 'c' is intentionally NOT asserted to any value — it is left at whatever the
 	// uninitialized script object carries; the point is only that load succeeded.
 }
