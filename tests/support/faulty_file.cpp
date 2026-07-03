@@ -26,4 +26,18 @@ bool zCFaultyFile::Flush()
 	return true;
 }
 
+int zCFaultyFile::Read(void * ptr, uint size)
+{
+	// Truncate to the read cap first (a short/zero count), then delegate to the
+	// base, which further clamps to the current sub-file end.
+	if(m_readCapActive)
+	{
+		uint32_t avail = (m_read < m_readCap) ? (m_readCap - m_read) : 0u;
+		if(size > avail) size = avail;
+	}
+	int r = zCMemoryFile::Read(ptr, size);
+	m_read += (uint32_t)r;
+	return r;
+}
+
 }

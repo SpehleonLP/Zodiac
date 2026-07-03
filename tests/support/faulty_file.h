@@ -22,14 +22,27 @@ public:
 	// Flush() throws zE_IOError.
 	void failOnFlush()                   { m_failFlush = true; }
 
+	// After a cumulative n bytes have been returned by Read, every further Read
+	// truncates (returns a short/zero count) — simulating a truncated stream.
+	// Read never throws (mirrors production zCFile::Read); the CALLER's
+	// sizeof()!=Read() check is what turns the short count into zE_EndOfFile.
+	void failReadAfterBytes(uint32_t n) { m_readCap = n; m_readCapActive = true; }
+	// Cumulative bytes returned by Read so far (lets a test arm the read-fault
+	// exactly at a chosen load phase, e.g. right before LoadContext).
+	uint32_t bytesRead() const { return m_read; }
+
 	int  Write(const void * ptr, Zodiac::uint size) override;
 	bool Flush() override;
+	int  Read(void * ptr, Zodiac::uint size) override;
 
 private:
 	uint32_t m_written{0};
 	uint32_t m_writeCap{0};
 	bool     m_capActive{false};
 	bool     m_failFlush{false};
+	uint32_t m_read{0};
+	uint32_t m_readCap{0};
+	bool     m_readCapActive{false};
 };
 
 }

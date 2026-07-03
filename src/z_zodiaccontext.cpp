@@ -402,8 +402,8 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 
 	int callStackSize{};
 	uint32_t status;
-	file->Read(&callStackSize);
-	file->Read(&status);
+	if(sizeof(callStackSize) != file->Read(&callStackSize)) throw zE_EndOfFile;
+	if(sizeof(status) != file->Read(&status)) throw zE_EndOfFile;
 
 	asEContextState state = (asEContextState)status;
 
@@ -422,7 +422,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 	if(state == asEXECUTION_PREPARED)
 	{
 		uint32_t fn{};
-		file->Read(&fn);
+		if(sizeof(fn) != file->Read(&fn)) throw zE_EndOfFile;
 		auto func = reader->LoadFunction(fn);
 		if(func)
 		{
@@ -434,7 +434,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 			// primitives load by value, handles null-then-load an owned reference the
 			// prepared frame's clean-up will release.
 			uint32_t argCount{};
-			file->Read(&argCount);
+			if(sizeof(argCount) != file->Read(&argCount)) { func->Release(); throw zE_EndOfFile; }
 
 			StackVar arg;
 			for(uint32_t a = 0; a < argCount; ++a)
@@ -471,7 +471,7 @@ void Zodiac::ZodiacLoad(zIZodiacReader* reader, asIScriptContext** _ctx, int&)
 	StackFrame sf;
 	for(int i = 0; i < callStackSize; ++i)
 	{
-		file->Read(&sf);
+		if(sizeof(sf) != file->Read(&sf)) throw zE_EndOfFile;
 
 		if(sf.isCallState == true)
 		{

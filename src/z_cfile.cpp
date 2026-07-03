@@ -53,6 +53,12 @@ zCFile::~zCFile()
 
 int zCFile::Read(void *ptr, uint size)
 {
+	// R2: unlike Write (which THROWS on a sub-file overrun, W2), Read returns a
+	// possibly-SHORT count BY DESIGN. A short read at a sub-file boundary can be a
+	// legitimate end-of-record, so this must not throw. Callers that need an exact
+	// count must verify it via the `sizeof(x) != Read(&x)` idiom (as the context
+	// loader in z_zodiaccontext.cpp now does). Do NOT "fix" this into a throw — it
+	// would break intended partial reads.
 	auto end = size + ftell(file);
 
 	if(end > stack[stackPos].end)
