@@ -225,6 +225,10 @@ template<> inline int zIZodiac::GetTypeId<std::nullptr_t>() { return 0; }
 
 extern std::unique_ptr<zIFileDescriptor> FromCFile(FILE *);
 extern std::unique_ptr<zIFileDescriptor> FromCFile(FILE **);
+// In-process buffer target — no file, no syscalls on the hot path. Backed by an
+// anonymous memory reservation (see src/z_memoryfile.h). Returns nullptr if the
+// reservation fails. Default reserve is address space (256 MiB), not RAM.
+extern std::unique_ptr<zIFileDescriptor> FromMemory(std::size_t reserveBytes = std::size_t(256) << 20);
 
 class zIFileDescriptor : public asIBinaryStream
 {
