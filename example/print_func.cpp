@@ -298,6 +298,7 @@ static void ScanFormat(std::string const& in, IN_ARGS_16)
 }
 */
 
+
 int Print::asRegister(asRegistration & reg)
 {
 	reg.Defer([](asRegistration& reg) {
@@ -307,16 +308,16 @@ int Print::asRegister(asRegistration & reg)
 		reg.GetEngine()->SetDefaultAccessMask(AccessMask_Strings);
 		reg.GetEngine()->SetDefaultNamespace("");
 	
-		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(?&in...) explicit",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterObjectBehaviour("string", asBEHAVE_CONSTRUCT,  "void f(const ?&in...) explicit",  asFUNCTION(PrettyPrinting), asCALL_GENERIC); assert( r >= 0 );
 		
 		reg.GetEngine()->SetDefaultNamespace("string");
-		r = engine->RegisterGlobalFunction("string format(const string &in format, ?&in...)",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
+		r = engine->RegisterGlobalFunction("string format(const string &in format, const ?&in...)",  asFUNCTION(PrettyPrintingF), asCALL_GENERIC); assert( r >= 0 );
 		reg.GetEngine()->SetDefaultNamespace("");
 
-		r = engine->RegisterGlobalFunction("void Print(?&in...)", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r >= 0);
-		r = engine->RegisterGlobalFunction("void Println(?&in...)", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r >= 0);
+		r = engine->RegisterGlobalFunction("void Print(const ?&in...)", asFUNCTION(PrintFunc), asCALL_GENERIC);  assert(r >= 0);
+		r = engine->RegisterGlobalFunction("void Println(const ?&in...)", asFUNCTION(PrintFuncLn), asCALL_GENERIC);  assert(r >= 0);
 
-		r = engine->RegisterGlobalFunction("void Printf(const string &in format, ?&in...)", asFUNCTION(asPrintFormat), asCALL_GENERIC);  assert(r >= 0);
+		r = engine->RegisterGlobalFunction("void Printf(const string &in format, const ?&in...)", asFUNCTION(asPrintFormat), asCALL_GENERIC);  assert(r >= 0);
 	});
 
 	return 0;
